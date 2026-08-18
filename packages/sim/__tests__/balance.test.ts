@@ -1,48 +1,84 @@
 /**
- * Design invariants, not balance polish.
+ * Design invariants, not balance polish. CLAUDE.md §10 and the rework spec's
+ * done-when (3): "A board that neglects any one family loses to the wave
+ * designed to punish it."
  *
- * CLAUDE.md §10: "New tower types as the answer to 'the game feels samey'" is
- * an anti-pattern — enemy variety is what forces tower diversity. These tests
- * assert that the enemy set actually does that: if a single-tower build ever
- * starts clearing the board, the two towers have stopped being a decision and
- * the level needs a new enemy, not a new tower.
+ * These are tuning tripwires. Expect to update them when tuning changes — that
+ * is the point. A tuning change that flattens the decision space should fail
+ * here rather than pass quietly.
  *
- * Expect to update these when tuning changes. That is the point — they make a
- * tuning change that flattens the decision space visible instead of silent.
+ * KNOWN GAP, asserted honestly below rather than papered over: neglecting MELEE
+ * does not lose. §5 gives the runner two answers, "melee block OR slow", so a
+ * roster carrying Frost answers runners without a blocker, and no other
+ * archetype is melee-exclusive the way flier is projectile-exclusive. Melee
+ * measures as break-even at equal damage density, not mandatory. Closing that
+ * needs an enemy change, not a number change — see the note in enemies.ts.
  */
 
 import { describe, expect, it } from "vitest";
 import { M0_LEVEL } from "../src/level.js";
-import { ALL_ARROW, ALL_CANNON, MIXED, autoplay } from "./autoplay.js";
+import {
+  AB_NO_MELEE, AB_WITH_MELEE, BALANCED, NO_PROJECTILE, NO_STATUS, STATUS_HEAVY, autoplay,
+} from "./autoplay.js";
 
-describe("the two towers are a real decision", () => {
-  it("rewards a mixed build with a win", () => {
-    const { final } = autoplay(M0_LEVEL, MIXED);
-    expect(final.status).toBe("won");
+/** Wave index (0-based) whose archetype punishes each neglected family. */
+const FLIER_WAVE = 3;
+
+describe("neglecting a family is punished", () => {
+  it("a roster with no projectile tower cannot touch fliers and dies to them", () => {
+    const { final } = autoplay(M0_LEVEL, NO_PROJECTILE);
+    expect(final.status).toBe("lost");
+    expect(final.waveIndex).toBeLessThanOrEqual(FLIER_WAVE);
   });
 
-  it("punishes an all-arrow build — armoured brutes blunt small, frequent hits", () => {
-    const { final } = autoplay(M0_LEVEL, ALL_ARROW);
+  it("a status-heavy board loses — force multipliers with nothing to multiply", () => {
+    const { final } = autoplay(M0_LEVEL, STATUS_HEAVY);
     expect(final.status).toBe("lost");
   });
 
-  it("punishes an all-cannon build — runners outpace a slow firing cycle", () => {
-    const { final } = autoplay(M0_LEVEL, ALL_CANNON);
+  it("a roster with no status tower is walled by armour and the boss", () => {
+    const { final } = autoplay(M0_LEVEL, NO_STATUS);
     expect(final.status).toBe("lost");
   });
 });
 
-describe("run shape", () => {
-  it("lasts about four minutes, which is the M0 question being asked", () => {
-    const { ticks } = autoplay(M0_LEVEL, MIXED);
-    const seconds = ticks / 30;
-    expect(seconds).toBeGreaterThan(150);
-    expect(seconds).toBeLessThan(360);
+describe("a roster spanning all three families wins", () => {
+  it("clears the run with lives to spare", () => {
+    const { final } = autoplay(M0_LEVEL, BALANCED);
+    expect(final.status).toBe("won");
+    expect(final.lives).toBeGreaterThan(0);
   });
 
-  it("ends decisively rather than stalling out", () => {
-    const { final } = autoplay(M0_LEVEL, MIXED);
-    expect(["won", "lost"]).toContain(final.status);
-    expect(final.enemies.length).toBe(0);
+  it("lasts long enough to be a run and short enough to retry", () => {
+    const { ticks } = autoplay(M0_LEVEL, BALANCED);
+    const seconds = ticks / 30;
+    expect(seconds).toBeGreaterThan(150);
+    expect(seconds).toBeLessThan(400);
+  });
+});
+
+describe("melee is viable, and measurably not mandatory", () => {
+  // A fair A/B: identical rosters but for one slot, so damage density matches
+  // and the only variable is whether a blocker is in the draw pool.
+  it("trading a projectile slot for a blocker still clears the run", () => {
+    const { final } = autoplay(M0_LEVEL, AB_WITH_MELEE);
+    expect(final.status).toBe("won");
+  });
+
+  it("documents that dropping the blocker also clears it — melee is break-even", () => {
+    const withMelee = autoplay(M0_LEVEL, AB_WITH_MELEE);
+    const without = autoplay(M0_LEVEL, AB_NO_MELEE);
+    expect(withMelee.final.status).toBe("won");
+    // This assertion records the gap. If a future enemy change makes melee
+    // mandatory, this flips to `toBe("lost")` and the note above comes out.
+    expect(without.final.status).toBe("won");
+  });
+});
+
+describe("the summon economy holds", () => {
+  it("escalating cost keeps the board from being flooded", () => {
+    const run = autoplay(M0_LEVEL, BALANCED);
+    expect(run.summons).toBeLessThan(M0_LEVEL.terrain.tiles.length * 3);
+    expect(run.merges).toBeGreaterThan(0);
   });
 });

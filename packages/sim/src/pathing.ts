@@ -62,3 +62,64 @@ export function posAt(path: PathGeometry, d: number): Point {
     y: a.y + Math.trunc(((b.y - a.y) * along) / segLen),
   };
 }
+
+/**
+ * Distance along the lane at a point that lies on it, or -1 if it does not.
+ *
+ * Used to give each melee-eligible path tile a `pathDist`, which is what makes
+ * blocking a 1-D comparison against `enemy.dist` instead of a geometry problem.
+ * Segments are axis-aligned, so this is exact integer arithmetic.
+ */
+export function pathDistanceAt(path: PathGeometry, p: Point): number {
+  for (let i = 1; i < path.pts.length; i++) {
+    const a = path.pts[i - 1];
+    const b = path.pts[i];
+
+    if (a.x === b.x && p.x === a.x) {
+      const lo = Math.min(a.y, b.y);
+      const hi = Math.max(a.y, b.y);
+      if (p.y >= lo && p.y <= hi) return path.cum[i - 1] + Math.abs(p.y - a.y);
+    }
+    if (a.y === b.y && p.y === a.y) {
+      const lo = Math.min(a.x, b.x);
+      const hi = Math.max(a.x, b.x);
+      if (p.x >= lo && p.x <= hi) return path.cum[i - 1] + Math.abs(p.x - a.x);
+    }
+  }
+  return -1;
+}
+
+/**
+ * Nearest distance along the lane to an arbitrary point.
+ *
+ * Segments are axis-aligned, so projecting onto one is a clamp on a single
+ * coordinate — exact integer arithmetic, no trigonometry.
+ */
+export function nearestLaneDistance(path: PathGeometry, p: Point): number {
+  let bestDist = 0;
+  let bestSquared = Infinity;
+
+  for (let i = 1; i < path.pts.length; i++) {
+    const a = path.pts[i - 1];
+    const b = path.pts[i];
+
+    let cx: number;
+    let cy: number;
+    if (a.x === b.x) {
+      cx = a.x;
+      cy = Math.max(Math.min(a.y, b.y), Math.min(Math.max(a.y, b.y), p.y));
+    } else {
+      cy = a.y;
+      cx = Math.max(Math.min(a.x, b.x), Math.min(Math.max(a.x, b.x), p.x));
+    }
+
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    const squared = dx * dx + dy * dy;
+    if (squared < bestSquared) {
+      bestSquared = squared;
+      bestDist = path.cum[i - 1] + Math.abs(cx - a.x) + Math.abs(cy - a.y);
+    }
+  }
+  return bestDist;
+}

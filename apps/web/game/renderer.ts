@@ -2,34 +2,60 @@
  * Pixi render layer. CLAUDE.md §5: this reads sim state and draws it. It never
  * writes to sim state and the sim never imports anything from here.
  *
- * It is handed two consecutive sim states and an alpha, and interpolates
- * between them, which is why the sim can run at a fixed 30Hz while the screen
- * runs at whatever the display does.
+ * Conveyance the design depends on, not decoration:
+ *   - blocked enemies must visibly stop and engage — it is the clearest readout
+ *     in the game and the reason a leak is comprehensible rather than arithmetic
+ *   - status effects must be visible, or status towers feel broken rather than
+ *     subtle
  */
 
 import { Application, Container, Graphics } from "pixi.js";
-import { ENEMY_SPECS, TILE, tileCentre, towerRange, unfp } from "@siege/sim";
-import type { GameState } from "@siege/sim";
+import { ENEMY_SPECS, TILE, rangeAtTier, tileCentre, towerSpec } from "@siege/sim";
+import type { Enemy, GameState, StatusKind } from "@siege/sim";
 
 const COLORS = {
   ground: 0x0d1117,
   tile: 0x161b22,
-  path: 0x2b3441,
-  pathEdge: 0x3d4857,
-  slot: 0x1f6feb,
-  slotFill: 0x11213a,
-  arrow: 0x58d6ff,
-  cannon: 0xff9f43,
-  runner: 0xf5d547,
-  swarm: 0x7ee787,
-  brute: 0xff6b6b,
+  lane: 0x2b3441,
+  platform: 0x11213a,
+  platformEdge: 0x1f6feb,
+  laneTile: 0x3a2f1b,
+  laneTileEdge: 0xd29922,
+  projectile: 0x58d6ff,
+  melee: 0xf0a04b,
+  status: 0xc084fc,
+  range: 0x58d6ff,
+  merge: 0x3fb950,
   hp: 0x3fb950,
   hpBack: 0x00000088,
-  range: 0x58d6ff,
+  engaged: 0xff6b6b,
 } as const;
 
-const TOWER_COLOR = { arrow: COLORS.arrow, cannon: COLORS.cannon } as const;
-const ENEMY_COLOR = { runner: COLORS.runner, swarm: COLORS.swarm, brute: COLORS.brute } as const;
+const FAMILY_COLOR: Record<string, number> = {
+  projectile: COLORS.projectile,
+  melee: COLORS.melee,
+  status: COLORS.status,
+};
+
+const ENEMY_COLOR: Record<string, number> = {
+  runner: 0xf5d547,
+  armoured: 0x9aa5b1,
+  swarm: 0x7ee787,
+  flier: 0x8be9fd,
+  brute: 0xff6b6b,
+  boss: 0xff2e63,
+};
+
+const STATUS_COLOR: Record<StatusKind, number> = {
+  slow: 0x58d6ff,
+  poison: 0x7ee787,
+  vulnerable: 0xff79c6,
+  armor_shred: 0xffb86c,
+  mark: 0xffffff,
+  stun: 0xf1fa8c,
+};
+
+const STATUS_ORDER: StatusKind[] = ["slow", "poison", "vulnerable", "armor_shred", "mark", "stun"];
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -41,6 +67,7 @@ export class Renderer {
   private staticLayer = new Graphics();
   private dynamicLayer = new Graphics();
   private selectedTowerId: number | null = null;
+  private partnerIds: number[] = [];
   private built = false;
 
   async init(canvasHost: HTMLElement, state: GameState): Promise<void> {
@@ -49,8 +76,7 @@ export class Renderer {
       antialias: true,
       resolution: Math.min(globalThis.devicePixelRatio ?? 1, 2),
       autoDensity: true,
-      // We drive the loop ourselves — see useGame.ts.
-      autoStart: false,
+      autoStart: false, // we drive the loop — see useGame.ts
       width: 100,
       height: 100,
     });
@@ -61,12 +87,12 @@ export class Renderer {
     this.built = true;
   }
 
-  get canvas(): HTMLCanvasElement | undefined {
-    return this.built ? this.app.canvas : undefined;
-  }
-
   setSelected(towerId: number | null): void {
     this.selectedTowerId = towerId;
+  }
+
+  setPartners(ids: number[]): void {
+    this.partnerIds = ids;
   }
 
   resize(width: number, height: number, state: GameState): void {
@@ -74,8 +100,8 @@ export class Renderer {
     this.app.renderer.resize(width, height);
     const { terrain } = state.level;
     const pxPerTile = Math.min(width / terrain.width, height / terrain.height);
-    // Draw in fixed-point world units and let the container do the scaling,
-    // so nothing in here has to know about pixels.
+    // Draw in fixed-point world units and let the container scale, so nothing
+    // in here has to know about pixels.
     this.world.scale.set(pxPerTile / TILE);
     this.world.position.set(
       (width - pxPerTile * terrain.width) / 2,
@@ -83,7 +109,7 @@ export class Renderer {
     );
   }
 
-  /** Board furniture: tiles, the lane, the buildable slots. Drawn once. */
+  /** Board furniture: grid, lane, and the two classes of buildable tile. */
   private drawStatic(state: GameState): void {
     const g = this.staticLayer;
     const { terrain } = state.level;
@@ -96,29 +122,32 @@ export class Renderer {
     }
     g.fill({ color: COLORS.tile });
 
-    // The lane, drawn as one thick polyline through the waypoints.
     const pts = terrain.path.map(tileCentre);
     for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1];
-      const b = pts[i];
-      g.moveTo(a.x, a.y);
-      g.lineTo(b.x, b.y);
+      g.moveTo(pts[i - 1].x, pts[i - 1].y);
+      g.lineTo(pts[i].x, pts[i].y);
     }
-    g.stroke({ width: TILE * 0.82, color: COLORS.path, cap: "round", join: "round" });
+    g.stroke({ width: TILE * 0.82, color: COLORS.lane, cap: "round", join: "round" });
 
-    for (const slot of terrain.slots) {
-      const c = tileCentre(slot);
-      g.roundRect(c.x - TILE * 0.36, c.y - TILE * 0.36, TILE * 0.72, TILE * 0.72, TILE * 0.16);
+    // Lane tiles read warm, platforms read cool — the class is the placement
+    // rule, so it has to be legible at a glance.
+    for (const tile of terrain.tiles) {
+      if (tile.class !== "path") continue;
+      const c = tileCentre(tile.pos);
+      g.roundRect(c.x - TILE * 0.38, c.y - TILE * 0.38, TILE * 0.76, TILE * 0.76, TILE * 0.14);
     }
-    g.fill({ color: COLORS.slotFill });
-    g.stroke({ width: 26, color: COLORS.slot, alpha: 0.65 });
+    g.fill({ color: COLORS.laneTile });
+    g.stroke({ width: 30, color: COLORS.laneTileEdge, alpha: 0.8 });
+
+    for (const tile of terrain.tiles) {
+      if (tile.class !== "platform") continue;
+      const c = tileCentre(tile.pos);
+      g.roundRect(c.x - TILE * 0.34, c.y - TILE * 0.34, TILE * 0.68, TILE * 0.68, TILE * 0.14);
+    }
+    g.fill({ color: COLORS.platform });
+    g.stroke({ width: 26, color: COLORS.platformEdge, alpha: 0.6 });
   }
 
-  /**
-   * @param prev state at the last tick
-   * @param cur  state at the current tick
-   * @param alpha 0..1 progress between them
-   */
   draw(prev: GameState, cur: GameState, alpha: number): void {
     if (!this.built) return;
     const g = this.dynamicLayer;
@@ -131,21 +160,45 @@ export class Renderer {
     if (this.selectedTowerId !== null) {
       const t = cur.towers.find((x) => x.id === this.selectedTowerId);
       if (t) {
-        g.circle(t.x, t.y, towerRange(t.kind, t.level));
-        g.fill({ color: COLORS.range, alpha: 0.07 });
-        g.stroke({ width: 20, color: COLORS.range, alpha: 0.5 });
+        const spec = towerSpec(t.towerId);
+        if (spec.effect.kind !== "block") {
+          g.circle(t.x, t.y, rangeAtTier(spec.range, t.tier));
+          g.fill({ color: COLORS.range, alpha: 0.07 });
+          g.stroke({ width: 20, color: COLORS.range, alpha: 0.45 });
+        }
       }
     }
 
     for (const t of cur.towers) {
-      const size = t.kind === "cannon" ? TILE * 0.56 : TILE * 0.46;
+      const spec = towerSpec(t.towerId);
+      const selected = t.id === this.selectedTowerId;
+      const partner = this.partnerIds.includes(t.id);
+      const size = spec.family === "melee" ? TILE * 0.58 : TILE * 0.5;
+
       g.roundRect(t.x - size / 2, t.y - size / 2, size, size, TILE * 0.1);
-      g.fill({ color: TOWER_COLOR[t.kind] });
-      // One pip per upgrade level above the first.
-      for (let i = 1; i < t.level; i++) {
-        g.circle(t.x - TILE * 0.16 + i * TILE * 0.16, t.y + size / 2 + TILE * 0.1, TILE * 0.05);
+      g.fill({ color: FAMILY_COLOR[spec.family] ?? 0xffffff });
+
+      if (partner || selected) {
+        g.roundRect(t.x - size * 0.72, t.y - size * 0.72, size * 1.44, size * 1.44, TILE * 0.14);
+        g.stroke({ width: 46, color: partner ? COLORS.merge : 0xffffff, alpha: 0.95 });
       }
-      if (t.level > 1) g.fill({ color: 0xffffff, alpha: 0.85 });
+
+      // Tier pips.
+      for (let i = 1; i < t.tier; i++) {
+        g.circle(t.x - TILE * 0.14 + i * TILE * 0.14, t.y + size / 2 + TILE * 0.11, TILE * 0.045);
+      }
+      if (t.tier > 1) g.fill({ color: 0xffffff, alpha: 0.9 });
+
+      // Blockers carry a health bar — watching it fall is the warning that a
+      // leak is coming.
+      if (t.maxHp > 0) {
+        const w = TILE * 0.7;
+        const top = t.y - size / 2 - 130;
+        g.rect(t.x - w / 2, top, w, 65);
+        g.fill({ color: COLORS.hpBack });
+        g.rect(t.x - w / 2, top, (w * Math.max(0, t.hp)) / t.maxHp, 65);
+        g.fill({ color: COLORS.hp });
+      }
     }
 
     for (const e of cur.enemies) {
@@ -155,19 +208,33 @@ export class Renderer {
       const spec = ENEMY_SPECS[e.kind];
 
       g.circle(x, y, spec.radius);
-      g.fill({ color: ENEMY_COLOR[e.kind] });
+      g.fill({ color: ENEMY_COLOR[e.kind] ?? 0xffffff });
+
+      if (spec.flying) {
+        // Fliers get a halo: they are the enemy blockers cannot touch.
+        g.circle(x, y, spec.radius + 90);
+        g.stroke({ width: 26, color: 0xffffff, alpha: 0.55 });
+      }
       if (spec.armor > 0) {
         g.circle(x, y, spec.radius);
-        g.stroke({ width: 40, color: 0xffffff, alpha: 0.7 });
+        g.stroke({ width: 44, color: 0xffffff, alpha: 0.65 });
       }
+
+      // Engaged: stopped and fighting a blocker. Drawn as a hard ring so it is
+      // obvious the enemy is being held rather than stuck.
+      if (e.blockedBy !== 0) {
+        g.circle(x, y, spec.radius + 150);
+        g.stroke({ width: 44, color: COLORS.engaged, alpha: 0.9 });
+      }
+
+      drawStatusPips(g, e, x, y, spec.radius);
 
       if (e.hp < e.maxHp) {
         const w = spec.radius * 2.2;
-        const h = 70;
-        const top = y - spec.radius - 140;
-        g.rect(x - w / 2, top, w, h);
+        const top = y - spec.radius - 150;
+        g.rect(x - w / 2, top, w, 70);
         g.fill({ color: COLORS.hpBack });
-        g.rect(x - w / 2, top, (w * e.hp) / e.maxHp, h);
+        g.rect(x - w / 2, top, (w * Math.max(0, e.hp)) / e.maxHp, 70);
         g.fill({ color: COLORS.hp });
       }
     }
@@ -176,8 +243,8 @@ export class Renderer {
       const p = prevProjectiles.get(proj.id);
       const x = p ? lerp(p.x, proj.x, alpha) : proj.x;
       const y = p ? lerp(p.y, proj.y, alpha) : proj.y;
-      g.circle(x, y, proj.kind === "cannon" ? 110 : 70);
-      g.fill({ color: TOWER_COLOR[proj.kind] });
+      g.circle(x, y, proj.splash > 0 ? 110 : 70);
+      g.fill({ color: COLORS.projectile });
     }
 
     this.app.renderer.render(this.app.stage);
@@ -190,7 +257,15 @@ export class Renderer {
   }
 }
 
-/** Fixed-point world units -> tiles, for positioning DOM overlays. */
-export function fpToTiles(n: number): number {
-  return unfp(n);
+/** A small stack of coloured dots under the enemy, one per active status. */
+function drawStatusPips(g: Graphics, e: Enemy, x: number, y: number, radius: number): void {
+  const active = STATUS_ORDER.filter((k) => e.statuses.some((s) => s.kind === k));
+  if (active.length === 0) return;
+
+  const spacing = 150;
+  const startX = x - ((active.length - 1) * spacing) / 2;
+  for (let i = 0; i < active.length; i++) {
+    g.circle(startX + i * spacing, y + radius + 150, 62);
+    g.fill({ color: STATUS_COLOR[active[i]] });
+  }
 }

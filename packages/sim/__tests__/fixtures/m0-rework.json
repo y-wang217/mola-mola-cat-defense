@@ -1,0 +1,350 @@
+{
+  "note": "Regenerate with `vitest run gen-fixture` and explain the change in the commit.",
+  "levelId": "m0-rework",
+  "seed": 20260818,
+  "roster": [
+    "frost",
+    "venom",
+    "hex",
+    "rasp",
+    "bulwark"
+  ],
+  "ticks": 6000,
+  "coverage": {
+    "summons": 22,
+    "merges": 2,
+    "sells": 1,
+    "noRoom": 7
+  },
+  "inputLog": [
+    {
+      "tick": 0,
+      "inputs": [
+        {
+          "tick": 0,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 40,
+      "inputs": [
+        {
+          "tick": 40,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 80,
+      "inputs": [
+        {
+          "tick": 80,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 240,
+      "inputs": [
+        {
+          "tick": 240,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 400,
+      "inputs": [
+        {
+          "tick": 400,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 600,
+      "inputs": [
+        {
+          "tick": 600,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 800,
+      "inputs": [
+        {
+          "tick": 800,
+          "kind": "merge",
+          "payload": {
+            "sourceId": 13,
+            "targetId": 2
+          }
+        }
+      ]
+    },
+    {
+      "tick": 840,
+      "inputs": [
+        {
+          "tick": 840,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 1040,
+      "inputs": [
+        {
+          "tick": 1040,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 1100,
+      "inputs": [
+        {
+          "tick": 1100,
+          "kind": "sell",
+          "payload": {
+            "towerId": 1
+          }
+        }
+      ]
+    },
+    {
+      "tick": 1240,
+      "inputs": [
+        {
+          "tick": 1240,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 1400,
+      "inputs": [
+        {
+          "tick": 1400,
+          "kind": "merge",
+          "payload": {
+            "sourceId": 14,
+            "targetId": 3
+          }
+        }
+      ]
+    },
+    {
+      "tick": 1480,
+      "inputs": [
+        {
+          "tick": 1480,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 1760,
+      "inputs": [
+        {
+          "tick": 1760,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 2040,
+      "inputs": [
+        {
+          "tick": 2040,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 2320,
+      "inputs": [
+        {
+          "tick": 2320,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 2640,
+      "inputs": [
+        {
+          "tick": 2640,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 2960,
+      "inputs": [
+        {
+          "tick": 2960,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 3280,
+      "inputs": [
+        {
+          "tick": 3280,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 3640,
+      "inputs": [
+        {
+          "tick": 3640,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 4000,
+      "inputs": [
+        {
+          "tick": 4000,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 4360,
+      "inputs": [
+        {
+          "tick": 4360,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 4760,
+      "inputs": [
+        {
+          "tick": 4760,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 5160,
+      "inputs": [
+        {
+          "tick": 5160,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 5200,
+      "inputs": [
+        {
+          "tick": 5200,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 5240,
+      "inputs": [
+        {
+          "tick": 5240,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 5280,
+      "inputs": [
+        {
+          "tick": 5280,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 5560,
+      "inputs": [
+        {
+          "tick": 5560,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 5600,
+      "inputs": [
+        {
+          "tick": 5600,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 5640,
+      "inputs": [
+        {
+          "tick": 5640,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 5680,
+      "inputs": [
+        {
+          "tick": 5680,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 5720,
+      "inputs": [
+        {
+          "tick": 5720,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    }
+  ],
+  "hash": "c3b2df58"
+}

@@ -1,19 +1,27 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { TOWER_SPECS } from "@siege/sim";
-import type { TowerKind } from "@siege/sim";
+import { TOWER_POOL, towerSpec } from "@siege/sim";
+import type { TowerId } from "@siege/sim";
 import { useGame } from "@/game/useGame";
 import Hud from "./Hud";
+import RosterSelect from "./RosterSelect";
 
-const TOWER_LABEL: Record<TowerKind, string> = { arrow: "Arrow", cannon: "Cannon" };
-const TOWER_BLURB: Record<TowerKind, string> = {
-  arrow: "Fast, single target. Struggles against armour.",
-  cannon: "Slow, splash, big hits. Struggles against speed.",
+const FAMILY_DOT: Record<string, string> = {
+  projectile: "bg-sky-400",
+  melee: "bg-amber-400",
+  status: "bg-violet-400",
 };
 
-/** Track an element's pixel size so the slot overlay can match the canvas. */
-function useElementSize(ref: React.RefObject<HTMLElement | null>) {
+/**
+ * Track an element's pixel size so the tower overlay can match the canvas.
+ *
+ * `key` re-runs the effect when the element is mounted or replaced. Without it
+ * the observer attaches once at mount — when the roster screen is showing and
+ * the board does not exist — so it never measures and every hit target is
+ * sized zero.
+ */
+function useElementSize(ref: React.RefObject<HTMLElement | null>, key: string) {
   const [size, setSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
     const el = ref.current;
@@ -23,24 +31,30 @@ function useElementSize(ref: React.RefObject<HTMLElement | null>) {
     const observer = new ResizeObserver(update);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [ref]);
+  }, [ref, key]);
   return size;
 }
 
 export default function GameView() {
   const host = useRef<HTMLDivElement | null>(null);
   const game = useGame(host);
+  const { width, height } = useElementSize(host, game.phase);
   const { hud, level } = game;
-  const { width, height } = useElementSize(host);
 
-  const occupiedBySlot = new Map(hud.towers.map((t) => [t.slotIndex, t]));
+  if (game.phase === "roster") {
+    return <RosterSelect initial={game.roster} onStart={game.startRun} />;
+  }
+  if (!hud) return <div className="flex-1" />;
 
-  // The renderer letterboxes the board inside whatever space it is given
-  // (see Renderer.resize). Repeat that math here so the DOM hit targets land
-  // exactly on the drawn slots at any viewport size.
+  // The renderer letterboxes the board inside whatever space it is given (see
+  // Renderer.resize). Repeat that math so DOM hit targets land on the drawn
+  // towers at any viewport size.
   const pxPerTile = Math.min(width / level.terrain.width, height / level.terrain.height);
   const offsetX = (width - pxPerTile * level.terrain.width) / 2;
   const offsetY = (height - pxPerTile * level.terrain.height) / 2;
+
+  const selected = hud.towers.find((t) => t.id === game.selectedTowerId);
+  const over = hud.status === "won" || hud.status === "lost";
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-2">
@@ -49,49 +63,47 @@ export default function GameView() {
       <div className="relative min-h-0 flex-1">
         <div ref={host} className="absolute inset-0 overflow-hidden rounded-xl" />
 
-        {/* Slot hit targets are DOM, not canvas: real tap targets, focusable,
-            and positioned by the same grid the sim uses. */}
+        {/* Only towers are tappable. There are deliberately no empty-tile
+            targets: the player cannot choose where a summon lands. */}
         <div className="absolute inset-0">
-          {level.terrain.slots.map((slot, i) => {
-            const tower = occupiedBySlot.get(i);
-            const selected = tower && tower.id === game.selectedTowerId;
-            const affordable = hud.gold >= TOWER_SPECS[game.selectedKind].cost;
+          {hud.towers.map((t) => {
+            const tile = level.terrain.tiles[t.tileIndex];
+            const isPartner = hud.partners.includes(t.id);
             return (
               <button
-                key={i}
-                onClick={() => game.tapSlot(i)}
-                aria-label={
-                  tower
-                    ? `${TOWER_LABEL[tower.kind]} level ${tower.level}`
-                    : `Empty slot ${i + 1}`
-                }
-                className={[
-                  "absolute -translate-x-1/2 -translate-y-1/2 rounded-lg transition",
-                  selected ? "ring-2 ring-sky-300" : "",
-                  !tower && !affordable ? "opacity-40" : "",
-                ].join(" ")}
+                key={t.id}
+                onClick={() => game.tapTower(t.id)}
+                aria-label={`${t.name} tier ${t.tier}${isPartner ? ", can merge" : ""}`}
+                className="absolute -translate-x-1/2 -translate-y-1/2 rounded-lg"
                 style={{
-                  left: offsetX + (slot.x + 0.5) * pxPerTile,
-                  top: offsetY + (slot.y + 0.5) * pxPerTile,
-                  width: pxPerTile * 0.86,
-                  height: pxPerTile * 0.86,
+                  left: offsetX + (tile.pos.x + 0.5) * pxPerTile,
+                  top: offsetY + (tile.pos.y + 0.5) * pxPerTile,
+                  width: pxPerTile * 0.9,
+                  height: pxPerTile * 0.9,
                 }}
               />
             );
           })}
         </div>
 
-        {(hud.status === "won" || hud.status === "lost") && (
+        {game.message && (
+          <div className="pointer-events-none absolute inset-x-2 top-2 rounded-lg bg-slate-800/95 px-3 py-2 text-center text-sm text-amber-200">
+            {game.message}
+          </div>
+        )}
+
+        {over && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-xl bg-slate-950/85 backdrop-blur-sm">
             <p className="text-3xl font-semibold">
               {hud.status === "won" ? "Held the line" : "Overrun"}
             </p>
             <p className="text-sm text-slate-400">
-              Wave {hud.wave}/{hud.waveCount} · {hud.kills} killed · {hud.leaks} leaked
+              Wave {hud.wave}/{hud.waveCount} · {hud.kills} killed · {hud.leaks} leaked ·{" "}
+              {hud.summonsUsed} summons
             </p>
             <p className="text-2xl tabular-nums">{hud.score.toLocaleString()}</p>
             <button
-              onClick={game.restart}
+              onClick={game.backToRoster}
               className="rounded-lg bg-sky-500 px-6 py-3 text-base font-semibold text-slate-950 active:bg-sky-400"
             >
               Again
@@ -101,68 +113,61 @@ export default function GameView() {
       </div>
 
       <div className="flex shrink-0 flex-col gap-2">
-        <div className="grid grid-cols-2 gap-2">
-          {(Object.keys(TOWER_SPECS) as TowerKind[]).map((kind) => {
-            const active = game.selectedKind === kind;
-            const affordable = hud.gold >= TOWER_SPECS[kind].cost;
+        {/* The roster stays on screen: the player has to be able to reason
+            about what the next summon might be. */}
+        <div className="flex gap-1">
+          {game.roster.map((id: TowerId) => {
+            const spec = TOWER_POOL.find((t) => t.id === id);
+            if (!spec) return null;
             return (
-              <button
-                key={kind}
-                onClick={() => game.setSelectedKind(kind)}
-                className={[
-                  "rounded-lg border px-3 py-2 text-left transition",
-                  active ? "border-sky-400 bg-sky-500/10" : "border-slate-700 bg-slate-900",
-                  affordable ? "" : "opacity-50",
-                ].join(" ")}
+              <div
+                key={id}
+                className="flex flex-1 items-center gap-1 rounded-md bg-slate-900 px-1.5 py-1"
+                title={spec.blurb}
               >
-                <span className="flex items-baseline justify-between">
-                  <span className="font-semibold">{TOWER_LABEL[kind]}</span>
-                  <span className="tabular-nums text-amber-300">{TOWER_SPECS[kind].cost}g</span>
-                </span>
-                <span className="mt-0.5 block text-xs leading-snug text-slate-400">
-                  {TOWER_BLURB[kind]}
-                </span>
-              </button>
+                <span className={`h-2 w-2 shrink-0 rounded-full ${FAMILY_DOT[spec.family]}`} />
+                <span className="truncate text-[11px] text-slate-300">{spec.name}</span>
+              </div>
             );
           })}
         </div>
 
-        {game.selectedTowerId !== null &&
-          (() => {
-            const t = hud.towers.find((x) => x.id === game.selectedTowerId);
-            if (!t) return null;
-            return (
-              <div className="flex gap-2">
-                <button
-                  disabled={!t.canUpgrade || hud.gold < t.upgradeCost}
-                  onClick={game.upgradeSelected}
-                  className="flex-1 rounded-lg bg-slate-800 px-3 py-3 font-medium disabled:opacity-40"
-                >
-                  {t.canUpgrade ? `Upgrade → L${t.level + 1} · ${t.upgradeCost}g` : "Max level"}
-                </button>
-                <button
-                  onClick={game.sellSelected}
-                  className="rounded-lg bg-slate-800 px-4 py-3 font-medium text-slate-300"
-                >
-                  Sell {t.sellValue}g
-                </button>
-              </div>
-            );
-          })()}
-
-        {hud.status === "building" && (
-          <button
-            onClick={game.startWave}
-            className="rounded-lg bg-emerald-500 px-4 py-3.5 text-base font-semibold text-slate-950 active:bg-emerald-400"
-          >
-            Start wave {hud.wave}
-          </button>
-        )}
-        {hud.status === "wave" && (
-          <p className="py-3 text-center text-sm text-slate-500">
-            Wave {hud.wave} incoming — you can still build
+        {selected ? (
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1 rounded-lg bg-slate-900 px-3 py-2">
+              <p className="truncate text-sm font-semibold">
+                {selected.name} · tier {selected.tier}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                {hud.partners.length > 0
+                  ? `Tap a highlighted tower to merge — the result re-rolls`
+                  : selected.family === "melee"
+                    ? `Holding ${selected.blocking} · ${selected.hp}/${selected.maxHp} hp`
+                    : towerSpec(selected.towerId).blurb}
+              </p>
+            </div>
+            <button
+              onClick={game.sellSelected}
+              className="shrink-0 rounded-lg bg-slate-800 px-4 py-3 text-sm font-medium text-slate-300"
+            >
+              Sell {selected.sellValue}
+            </button>
+          </div>
+        ) : (
+          <p className="px-1 py-1 text-[11px] leading-snug text-slate-500">
+            Tap a tower to select it. Two of the same type and tier can merge —
+            tier goes up, the type re-rolls.
           </p>
         )}
+
+        <button
+          onClick={game.summon}
+          disabled={!hud.canAfford || over}
+          className="flex items-center justify-between rounded-lg bg-emerald-500 px-5 py-3.5 text-base font-semibold text-slate-950 disabled:bg-slate-800 disabled:text-slate-500"
+        >
+          <span>Summon</span>
+          <span className="tabular-nums">{hud.summonCost} mana</span>
+        </button>
       </div>
     </div>
   );

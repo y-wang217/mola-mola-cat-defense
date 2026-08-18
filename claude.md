@@ -165,19 +165,22 @@ Define these in `packages/sim/types.ts` and treat changes as migrations.
 type LevelDef = {
   id: string;            // "2026-08-19"
   seed: number;          // drives all in-run randomness
-  terrain: ...;          // paths, buildable slots, hazards
+  terrain: ...;          // lane waypoints + tiles (path | platform class)
   waves: WaveDef[];      // fully authored, not random
   modifiers: string[];   // available Risk contracts for this day
 };
 
+// Reworked 2026-08-18. There is deliberately no `place`: the player cannot
+// choose a tile, and no `start_wave`: waves auto-advance.
 type Input = {
   tick: number;          // when it was issued — ordering is everything
-  kind: "place" | "upgrade" | "sell" | "ability" | "start_wave";
+  kind: "summon" | "merge" | "sell" | "ability";
   payload: ...;
 };
 
 type RunSubmission = {
   levelId: string;
+  roster: TowerId[];     // chosen before the run; a replay needs it
   risk: string[];        // chosen handicaps
   inputs: Input[];       // the replay
   claimedScore: number;  // server recomputes and compares
@@ -229,7 +232,14 @@ and rethink rather than proceed.
 
 ### M0 — Is it fun?
 One hardcoded map. Pixi render + sim core. Local only, no backend, no build step
-beyond `pnpm dev`. Placement, waves, win/lose.
+beyond `pnpm dev`.
+
+**Superseded by the summon rework (2026-08-18).** Direct placement is gone: the
+player picks a 5-tower roster before the run, then summons — one button, costs
+mana, random roster tower onto a random legal tile. Agency comes from roster
+construction, merge (tier up, type re-rolls) and sell. Waves auto-advance,
+because time-regenerating mana plus a manual start button would let the player
+idle and bank unlimited mana.
 
 **Done when:** a person plays a 4-minute run and wants a second one.
 **This is the only question that matters. Nothing below is worth building if M0 fails.**
@@ -289,15 +299,13 @@ picking silently:
 - **Retries per day.** Current lean: unlimited retries, best score counts,
   attempt count shown on the share card — preserves the ten-seconds-after-a-loss
   retry loop (research §2.6.1) while keeping the daily social hook. Not final.
-- **Income model.** M0 ships **kill-gold**, chosen by the project owner on
-  2026-08-18 when M0 forced the question. Recorded plainly: this runs against the
-  lean previously stated here, which was a time-regenerating deployment resource
-  — no death spiral, symmetric for PvP, enables continuous deployment as the
-  moment-to-moment verb (research §2.5.1). Both models are implemented in
-  `packages/sim/src/content.ts` behind the `INCOME_MODEL` constant, so switching
-  is a one-line change and M0 playtest data can settle it rather than argument.
-  **Revisit before M4** — kill-gold's asymmetry bites hardest once two players'
-  ghosts race the same board.
+- **Income model.** Settled for M0 by the summon rework: **time-regenerating
+  mana**, fixed rate, independent of performance. This returns to the lean
+  originally recorded here — no death spiral, symmetric for the async PvP due at
+  M4, and it makes *timing* the resource decision rather than efficiency. The
+  kill-gold experiment recorded here on 2026-08-18 never reached playtest and is
+  moot; the `INCOME_MODEL` constant it lived behind has been deleted along with
+  gold itself. Constants are in `packages/sim/src/content.ts`.
 - **Is the game completable?** Affects whether the daily is the whole game or a
   front door to a campaign.
 - **Whether we build the social layer cosmetics require** (research §3.4.3). If

@@ -13,15 +13,21 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 
 export default function Hud({ hud }: { hud: HudModel }) {
   return (
-    <div className="flex items-center justify-between rounded-xl bg-slate-900/70 px-4 py-2">
-      <Stat
-        label="Lives"
-        value={String(hud.lives)}
-        tone={hud.lives <= 5 ? "text-red-400" : "text-slate-100"}
-      />
-      <Stat label="Gold" value={String(hud.gold)} tone="text-amber-300" />
-      <Stat label="Wave" value={`${hud.wave}/${hud.waveCount}`} />
-      <Stat label="Score" value={hud.score.toLocaleString()} />
+    <div className="shrink-0 rounded-xl bg-slate-900/70 px-4 py-2">
+      <div className="flex items-center justify-between">
+        <Stat
+          label="Lives"
+          value={String(hud.lives)}
+          tone={hud.lives <= 5 ? "text-red-400" : "text-slate-100"}
+        />
+        <Stat label="Mana" value={String(hud.mana)} tone="text-sky-300" />
+        <Stat
+          label={hud.status === "prep" ? "Next wave" : "Wave"}
+          value={hud.status === "prep" ? `${hud.prepSeconds}s` : `${hud.wave}/${hud.waveCount}`}
+          tone={hud.status === "prep" ? "text-emerald-300" : undefined}
+        />
+        <Stat label="Score" value={hud.score.toLocaleString()} />
+      </div>
     </div>
   );
 }

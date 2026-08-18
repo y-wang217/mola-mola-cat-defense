@@ -3,20 +3,27 @@
 Mobile-first tower defense, built as a daily-challenge web game.
 **`claude.md` is the source of truth for how this repo is built — read it first.**
 
-## Status: M0
+## Status: M0 (summon rework)
 
 M0 asks one question and nothing else: *does a four-minute run make a person
 want a second one?* (`claude.md` §9.)
 
-What exists:
+The player picks a **roster of 5 distinct towers before the run**, then plays one
+verb: **summon** — costs mana, drops a random roster tower onto a random legal
+tile. There is no placement choice and no type choice. Agency lives in three
+places instead, and all three are required for the design to work at all:
 
-- `packages/sim` — the deterministic sim. Pure TypeScript, zero runtime
-  dependencies, fixed 30Hz, fixed-point integer math, seeded PRNG.
-- `apps/web` — Next.js shell, PixiJS render layer, React/Tailwind HUD.
-  One hardcoded board, two towers, three enemies, eight waves. Local only.
+1. **Roster construction**, before the run — the strategic layer.
+2. **Merge** — two of the same type and tier become one at tier+1, with the type
+   **re-rolled** from the roster. Every merge is a real gamble.
+3. **Sell** — clearing a tile is the spatial verb, since placement is random.
 
-What does not exist yet, by design: no backend, no accounts, no replay log, no
-share card, no art. Those are M1–M4 and are gated on M0 answering yes.
+Three tower families, each made mandatory by the enemies rather than by a rule:
+projectile (platform tiles), melee (lane tiles, physically blocks), status
+(platform tiles, force multipliers with no standalone value).
+
+What does not exist yet, by design: no backend, no accounts, no share card, no
+art. Those are M2–M4 and are gated on M0 answering yes.
 
 ## Commands
 
@@ -38,30 +45,33 @@ and the reasoning is in `claude.md` §3.
 
 ## Design notes worth knowing before changing tuning
 
-The two towers are only a decision because the three enemies make them one:
-brutes have flat armour that blunts the arrow tower's small frequent hits,
-runners outpace the cannon's slow cycle, and swarms drown single-target damage.
-`packages/sim/__tests__/balance.test.ts` asserts that a mono-tower build loses.
-If a tuning change makes the game feel samey, the answer is a fourth **enemy**,
-not a third tower (`claude.md` §10).
+Enemies are written before towers, and each archetype exists to make one family
+mandatory (`packages/sim/src/enemies.ts`). Fliers ignore blockers, so projectile
+is required. Armour floors fast-and-weak damage, so `armor_shred` is required.
+`packages/sim/__tests__/balance.test.ts` asserts that a roster neglecting a
+family loses, and it is a tripwire: a tuning change that flattens the decision
+space should fail there rather than pass quietly.
 
-## Deploying
+**Known gap, asserted rather than hidden:** neglecting *melee* does not lose.
+§5 gives the runner two answers — "melee block **or** slow" — so a roster with
+Frost handles runners without a blocker, and nothing is melee-exclusive the way
+fliers are projectile-exclusive. Measured at equal damage density, melee is
+break-even. Closing that needs a new enemy, not a new number.
 
-This repo is a pnpm workspace and the deployable app is **`apps/web`**, not the
-repository root.
+Platform tiles are deliberately **clustered around the five lane tiles**. A
+blocker's whole job is holding enemies inside somebody's range; if lane tiles sit
+outside platform coverage then blocking parks the enemy in a dead zone and melee
+becomes a liability. Preserve that clustering when editing the board.
 
-On Vercel, set the project's **Root Directory** to `apps/web`
-(Settings → Build and Deployment → Root Directory, or the **Edit** button next
-to Root Directory on the import screen). Leave Framework Preset, Build Command
-and Output Directory on their defaults — once the root directory is right,
-Next.js is detected and `.next` is found.
+## Determinism
 
-**If you skip this, every route returns `404: NOT_FOUND`.** Vercel finds no
-framework dependency in the root `package.json`, falls back to the "Other"
-preset, and serves the repository root as static files — where there is no
-`index.html`. The build succeeds, so nothing looks wrong until you open the URL.
+Every summon draw, merge re-roll and tile selection consumes the single seeded
+run RNG stream, and **the order of consumption is part of the contract** — it is
+documented at the top of `packages/sim/src/summon.ts`. The golden fixture in
+`packages/sim/__tests__/fixtures/` pins a scripted run's final-state hash. Any
+change to draw order or tuning flips that hash, which must be an intentional,
+explained break with the fixture regenerated in the same commit:
 
-`packages/sim` lives outside the root directory, so the build needs **Include
-source files outside of the Root Directory in the Build Step** enabled. It is on
-by default for projects created after August 2020; if the build fails to resolve
-`@siege/sim`, check it first.
+```bash
+REGEN_FIXTURE=1 pnpm --filter @siege/sim exec vitest run gen-fixture
+```

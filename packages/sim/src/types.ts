@@ -1,136 +1,190 @@
 /**
- * The data contracts from CLAUDE.md §6. Changes here are migrations — the
- * replay log and any stored run are shaped by these types.
+ * Data contracts. CLAUDE.md §6: changes here are migrations — the replay log
+ * and any stored run are shaped by these types.
+ *
+ * M0-rework changes from the original M0 contract:
+ *   - Terrain.slots -> Terrain.tiles, with a path/platform class per tile.
+ *   - Input loses place/upgrade/start_wave, gains summon/merge.
+ *   - GameState.gold -> mana, plus the escalating summon cost.
+ *   - RunSubmission gains the roster, since it is chosen before the run and a
+ *     replay cannot be reproduced without it.
  */
 
 import type { RngState } from "./rng.js";
+import type { StatusEffect } from "./status.js";
+import type { EnemyKind } from "./enemies.js";
 
-export type TowerKind = "arrow" | "cannon";
-export type EnemyKind = "runner" | "swarm" | "brute";
+/** Identifies a row in TOWER_POOL. Kept as a string so data drives everything. */
+export type TowerId = string;
 
-/** A position in whole grid tiles. */
+export type TowerFamily = "projectile" | "melee" | "status";
+
+/**
+ * Path tiles are on the lane and only melee may stand there. Platform tiles are
+ * beside it and take projectile and status towers.
+ */
+export type TileClass = "path" | "platform";
+
 export type GridPos = { x: number; y: number };
 
-export type Terrain = {
-  /** Board size in tiles. */
-  width: number;
-  height: number;
-  /** Ordered waypoints. Segments are axis-aligned so their lengths are exact. */
-  path: GridPos[];
-  /** Tiles a tower may be placed on. Index into this array is the slot id. */
-  slots: GridPos[];
+export type Tile = {
+  pos: GridPos;
+  class: TileClass;
+  /**
+   * Distance along the lane at this tile's centre, fixed-point. Only meaningful
+   * for path tiles — it is what turns blocking into a 1-D comparison against
+   * `enemy.dist`. Zero for platform tiles.
+   */
+  pathDist: number;
 };
 
-/** One group of identical enemies released on a schedule within a wave. */
+export type Terrain = {
+  width: number;
+  height: number;
+  /** Ordered lane waypoints. Segments are axis-aligned so lengths are exact. */
+  path: GridPos[];
+  /** One index space for both classes; legality is a filter, not a union. */
+  tiles: Tile[];
+};
+
 export type SpawnDef = {
   kind: EnemyKind;
   count: number;
-  /** Ticks after the wave starts before the first of the group appears. */
   startTick: number;
-  /** Ticks between each member of the group. */
   intervalTicks: number;
 };
 
 export type WaveDef = {
   spawns: SpawnDef[];
-  /** Gold paid out when the wave is cleared. */
-  reward: number;
+  /** Ticks of breathing room before this wave auto-starts. */
+  prepTicks: number;
 };
 
 export type LevelDef = {
-  /** "2026-08-19" once levels are daily. M0 uses a static id. */
   id: string;
-  /** Drives all in-run randomness. */
   seed: number;
   terrain: Terrain;
-  /** Fully authored, never random. */
   waves: WaveDef[];
-  /** Risk contracts available for this day. Empty until M5. */
   modifiers: string[];
 };
 
 /**
- * A player action, stamped with the tick it was issued on. Ordering is
- * everything: the input log replayed in order is the run.
+ * A player action stamped with the tick it was issued on. Ordering is the
+ * replay. Note there is no `place`: the player cannot choose a tile, which is
+ * the entire point of the rework.
  */
 export type Input =
-  | { tick: number; kind: "place"; payload: { slotIndex: number; tower: TowerKind } }
-  | { tick: number; kind: "upgrade"; payload: { towerId: number } }
+  | { tick: number; kind: "summon"; payload: Record<string, never> }
+  | { tick: number; kind: "merge"; payload: { sourceId: number; targetId: number } }
   | { tick: number; kind: "sell"; payload: { towerId: number } }
-  | { tick: number; kind: "ability"; payload: { abilityId: string } }
-  | { tick: number; kind: "start_wave"; payload: Record<string, never> };
+  | { tick: number; kind: "ability"; payload: { abilityId: string } };
 
 export type Enemy = {
   id: number;
   kind: EnemyKind;
   hp: number;
   maxHp: number;
-  /** Distance travelled along the path, fixed-point. */
+  /** Distance travelled along the lane, fixed-point. */
   dist: number;
-  /** Cached world position, derived from `dist`. */
   x: number;
   y: number;
+  /** Tower id this enemy is stopped and fighting, or 0 when walking. */
+  blockedBy: number;
+  /** Ticks until it may hit its blocker again. */
+  attackCooldown: number;
+  statuses: StatusEffect[];
   alive: boolean;
 };
 
 export type Tower = {
   id: number;
-  kind: TowerKind;
-  slotIndex: number;
+  towerId: TowerId;
+  tileIndex: number;
   x: number;
   y: number;
-  /** 1-based. Upgrades raise damage and range, never fire rate. */
-  level: number;
-  /** Ticks until it may fire again. */
+  /** 1-based. Merging raises it. */
+  tier: number;
   cooldown: number;
-  /** Total gold sunk in, for the sell refund. */
+  /** Melee only: current and max hit points. Zero for other families. */
+  hp: number;
+  maxHp: number;
+  /** Enemy ids currently held by this tower. Melee only. */
+  blocking: number[];
+  /** Cumulative mana sunk in, for the sell refund. */
   invested: number;
+  /**
+   * Nearest distance along the lane to this tower. For path tiles it is the
+   * tile's own pathDist; for platforms it is the projection. Lane-shaped range
+   * and "first along the lane" targeting both read it.
+   */
+  laneDist: number;
 };
 
 export type Projectile = {
   id: number;
   x: number;
   y: number;
-  /** Impact point. Tracks the target while it lives, then freezes. */
   tx: number;
   ty: number;
   targetId: number;
   damage: number;
   speed: number;
-  /** 0 for single-target. */
   splash: number;
-  kind: TowerKind;
+  /**
+   * Pierce and chain are the same mechanic with a different next-target rule,
+   * so they share one field pair. "lane" continues to the next enemy further
+   * along the lane; "nearest" jumps to the closest untouched one.
+   */
+  hopsLeft: number;
+  hopMode: "none" | "lane" | "nearest";
+  /** Enemies already hit by this shot, so a hop never double-dips. */
+  hitIds: number[];
+  ownerTowerId: TowerId;
   alive: boolean;
 };
 
-export type RunStatus = "building" | "wave" | "won" | "lost";
+export type RunStatus = "prep" | "wave" | "won" | "lost";
+
+/** Surfaced to the UI for one tick. Never drives sim logic. */
+export type SimEvent =
+  | { kind: "no_room"; towerId: TowerId }
+  | { kind: "summoned"; towerId: TowerId; tileIndex: number }
+  | { kind: "merged"; towerId: TowerId; tier: number }
+  | { kind: "blocker_died"; tileIndex: number };
 
 export type GameState = {
-  /** The clock. There is no other one — see CLAUDE.md §3. */
+  /** The clock. There is no other one — CLAUDE.md §3. */
   tick: number;
   rng: RngState;
   level: LevelDef;
+  /** The 5 distinct towers chosen before the run. Draw pool for every roll. */
+  roster: TowerId[];
   status: RunStatus;
-  gold: number;
+  mana: number;
+  /** What the next summon costs. Escalates per summon and never resets. */
+  summonCost: number;
+  summonsUsed: number;
   lives: number;
-  /** Index of the wave being fought, or the next one to start. */
   waveIndex: number;
-  /** Ticks since the current wave started. */
   waveTick: number;
-  /** How many of each spawn group in the current wave have been released. */
+  /** Ticks until the next wave auto-starts. Only meaningful in "prep". */
+  prepRemaining: number;
   spawnCursors: number[];
   enemies: Enemy[];
   towers: Tower[];
   projectiles: Projectile[];
+  /** Cleared at the start of every tick; the UI reads it after. */
+  events: SimEvent[];
   nextId: number;
   score: number;
   kills: number;
   leaks: number;
 };
 
-/** What the client submits and the server re-simulates. See CLAUDE.md §6. */
+/** What the client submits and the server re-simulates. CLAUDE.md §6. */
 export type RunSubmission = {
   levelId: string;
+  roster: TowerId[];
   risk: string[];
   inputs: Input[];
   claimedScore: number;
