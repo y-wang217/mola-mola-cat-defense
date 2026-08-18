@@ -114,7 +114,7 @@ If a change would break determinism, stop and flag it.
 | App shell | **Next.js 15, App Router** | Zero-config API routes on Vercel |
 | UI | React + Tailwind, DOM overlay above the canvas | Iterating HUD in HTML is far faster than in-canvas |
 | UI state | Zustand | Sim state is NOT in Zustand. Only menus/modals/HUD chrome. |
-| Hosting | Vercel | |
+| Hosting | Vercel | Deploys from `apps/web`. The project's **Root Directory** setting must be `apps/web` — importing at the repo root detects no framework and 404s every route. See README → Deploying. |
 | DB + auth | Supabase (Postgres) | Auth matters as soon as identity + cosmetics exist |
 | Cache/leaderboard | Upstash Redis | **Not yet.** Add only when Postgres `ORDER BY` measurably hurts. |
 | Analytics | PostHog | |

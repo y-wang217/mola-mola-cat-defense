@@ -44,3 +44,24 @@ runners outpace the cannon's slow cycle, and swarms drown single-target damage.
 `packages/sim/__tests__/balance.test.ts` asserts that a mono-tower build loses.
 If a tuning change makes the game feel samey, the answer is a fourth **enemy**,
 not a third tower (`claude.md` §10).
+
+## Deploying
+
+This repo is a pnpm workspace and the deployable app is **`apps/web`**, not the
+repository root.
+
+On Vercel, set the project's **Root Directory** to `apps/web`
+(Settings → Build and Deployment → Root Directory, or the **Edit** button next
+to Root Directory on the import screen). Leave Framework Preset, Build Command
+and Output Directory on their defaults — once the root directory is right,
+Next.js is detected and `.next` is found.
+
+**If you skip this, every route returns `404: NOT_FOUND`.** Vercel finds no
+framework dependency in the root `package.json`, falls back to the "Other"
+preset, and serves the repository root as static files — where there is no
+`index.html`. The build succeeds, so nothing looks wrong until you open the URL.
+
+`packages/sim` lives outside the root directory, so the build needs **Include
+source files outside of the Root Directory in the Build Step** enabled. It is on
+by default for projects created after August 2020; if the build fails to resolve
+`@siege/sim`, check it first.
