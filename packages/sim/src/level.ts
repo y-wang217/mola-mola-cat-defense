@@ -82,17 +82,29 @@ export const M0_LEVEL: LevelDef = {
   seed: 20260818,
   terrain: buildTerrain(),
   waves: [
-    // 1 — runners. Teaches that range alone does not stop something this fast.
+    // 1 — runners, heavily softened. A player who summons NOTHING must survive
+    // this, so the count is small enough that even a completely empty board
+    // leaks only a fraction of the life pool.
+    //
+    // Counts ARE cut here, against the usual "keep the mana faucet flowing"
+    // instinct, and that is safe only because killManaShare sits at 0.3: the
+    // 6/s tick floor plus the starting grant funds the first several summons
+    // without needing a single kill. If the dial ever moves toward 1.0 these
+    // counts must come back up or the opening starves.
     {
       prepTicks: 300,
-      spawns: [{ kind: "runner", count: 7, startTick: 20, intervalTicks: 26 }],
+      scaling: { hpPct: 55, speedPct: 78, damagePct: 50 },
+      spawns: [{ kind: "runner", count: 4, startTick: 30, intervalTicks: 34 }],
     },
-    // 2 — swarm. Drowns single-target, drains blocker HP.
+    // 2 — swarm, still gentle. Two summons must clear this comfortably WHATEVER
+    // the roster drew — including the ~36% case where both draws are support
+    // towers that deal no damage at all. Sized so that board still survives.
     {
       prepTicks: 240,
+      scaling: { hpPct: 70, speedPct: 88, damagePct: 60 },
       spawns: [
-        { kind: "swarm", count: 13, startTick: 20, intervalTicks: 14 },
-        { kind: "runner", count: 4, startTick: 260, intervalTicks: 24 },
+        { kind: "swarm", count: 7, startTick: 30, intervalTicks: 18 },
+        { kind: "runner", count: 2, startTick: 260, intervalTicks: 28 },
       ],
     },
     // 3 — armoured. Fast-and-weak towers hit the 1-damage floor here.

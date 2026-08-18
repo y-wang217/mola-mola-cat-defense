@@ -104,6 +104,7 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
   const pendingRef = useRef<Input[]>([]);
   const rendererRef = useRef<Renderer | null>(null);
   const hudJsonRef = useRef<string>("");
+  const floatersRef = useRef<{ amount: number; x: number; y: number; age: number; life: number }[]>([]);
   const selectedRef = useRef<number | null>(null);
 
   const [hud, setHud] = useState<Hud | null>(null);
@@ -122,6 +123,7 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
     stateRef.current = fresh;
     prevRef.current = fresh;
     pendingRef.current = [];
+    floatersRef.current = [];
     hudJsonRef.current = "";
     setRoster(chosen);
     setSelectedTowerId(null);
@@ -196,6 +198,14 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
         pendingRef.current = [];
         acc -= TICK_MS;
 
+        // Bounty floaters are collected per drained tick, so a slow frame that
+        // advances the sim twice never swallows one.
+        for (const ev of stateRef.current.events) {
+          if (ev.kind === "bounty") {
+            floatersRef.current.push({ amount: ev.amount, x: ev.x, y: ev.y, age: 0, life: 1.4 });
+          }
+        }
+
         const noRoom = stateRef.current.events.find((e) => e.kind === "no_room");
         if (noRoom && noRoom.kind === "no_room") {
           setMessage(`No room for ${towerSpec(noRoom.towerId).name} — sell something`);
@@ -204,6 +214,13 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
         }
       }
 
+      const dtSeconds = dt / 1000;
+      for (const f of floatersRef.current) f.age += dtSeconds;
+      floatersRef.current = floatersRef.current.filter((f) => f.age < f.life);
+
+      // Floaters first: draw() issues the actual render call, so updating them
+      // afterwards would show them one frame stale.
+      rendererRef.current?.drawFloaters(floatersRef.current);
       rendererRef.current?.draw(prevRef.current!, stateRef.current!, acc / TICK_MS);
 
       const next = toHud(stateRef.current!, selectedRef.current);

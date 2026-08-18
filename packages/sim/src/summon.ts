@@ -16,7 +16,7 @@
  * and swapping the two steps would quietly delete it.
  */
 
-import { summonCostFor } from "./content.js";
+import { summonCostFor } from "./economy.js";
 import { nextInt } from "./rng.js";
 import { atTier, towerSpec } from "./towers.js";
 import type { GameState, TileClass, TowerId } from "./types.js";

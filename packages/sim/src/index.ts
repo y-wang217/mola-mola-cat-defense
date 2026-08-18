@@ -5,6 +5,7 @@ export * from "./status.js";
 export * from "./enemies.js";
 export * from "./towers.js";
 export * from "./pathing.js";
+export * from "./economy.js";
 export * from "./content.js";
 export * from "./summon.js";
 export * from "./merge.js";

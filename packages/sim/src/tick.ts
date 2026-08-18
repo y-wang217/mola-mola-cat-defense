@@ -14,16 +14,15 @@
  * documented there. Nothing in this file consumes randomness.
  */
 
+import { SCORE_PER_LIFE, SCORE_PER_WAVE, START_LIVES } from "./content.js";
 import {
   MANA_REGEN_AMOUNT,
   MANA_REGEN_INTERVAL,
-  SCORE_PER_LIFE,
-  SCORE_PER_WAVE,
   SELL_REFUND_PCT,
-  START_LIVES,
-  START_MANA,
+  STARTING_MANA,
+  bountyFor,
   summonCostFor,
-} from "./content.js";
+} from "./economy.js";
 import { ENEMY_SPECS, effectiveDamage } from "./enemies.js";
 import { dist2, isqrt } from "./fixed.js";
 import { mergePartners, releaseBlocked, tryMerge } from "./merge.js";
@@ -32,7 +31,9 @@ import { cloneRng, seedRng } from "./rng.js";
 import { applyStatus, expireStatuses, hasStatus, magnitudeOf } from "./status.js";
 import { trySummon } from "./summon.js";
 import { atTier, rangeAtTier, towerSpec, type ShotEffect, type StatusApplyEffect } from "./towers.js";
-import type { Enemy, GameState, Input, LevelDef, Projectile, Tower, TowerId } from "./types.js";
+import type {
+  Enemy, GameState, Input, LevelDef, Projectile, Tower, TowerId, WaveScaling,
+} from "./types.js";
 import type { EnemyKind } from "./enemies.js";
 
 /** Poison ticks on this cadence rather than every frame, so it reads as pulses. */
@@ -50,7 +51,9 @@ export function createInitialState(level: LevelDef, roster: TowerId[]): GameStat
     level,
     roster: roster.slice(),
     status: "prep",
-    mana: START_MANA,
+    mana: STARTING_MANA,
+    manaFromTick: 0,
+    manaFromKills: 0,
     summonCost: summonCostFor(0),
     summonsUsed: 0,
     lives: START_LIVES,
@@ -77,6 +80,8 @@ function cloneState(s: GameState): GameState {
     roster: s.roster,
     status: s.status,
     mana: s.mana,
+    manaFromTick: s.manaFromTick,
+    manaFromKills: s.manaFromKills,
     summonCost: s.summonCost,
     summonsUsed: s.summonsUsed,
     lives: s.lives,
@@ -166,7 +171,9 @@ export { mergePartners };
 // --- economy and wave frame ----------------------------------------------
 
 function regenMana(s: GameState): void {
-  if (s.tick % MANA_REGEN_INTERVAL === 0) s.mana += MANA_REGEN_AMOUNT;
+  if (s.tick % MANA_REGEN_INTERVAL !== 0) return;
+  s.mana += MANA_REGEN_AMOUNT;
+  s.manaFromTick += MANA_REGEN_AMOUNT;
 }
 
 /**
@@ -192,20 +199,33 @@ function advanceWaves(s: GameState, path: PathGeometry): void {
     while (s.spawnCursors[i] < group.count) {
       const due = group.startTick + s.spawnCursors[i] * group.intervalTicks;
       if (s.waveTick < due) break;
-      s.enemies.push(makeEnemy(s, group.kind, path));
+      s.enemies.push(makeEnemy(s, group.kind, path, wave.scaling));
       s.spawnCursors[i] += 1;
     }
   }
 }
 
-function makeEnemy(s: GameState, kind: EnemyKind, path: PathGeometry): Enemy {
+function makeEnemy(
+  s: GameState,
+  kind: EnemyKind,
+  path: PathGeometry,
+  scaling: WaveScaling | undefined,
+): Enemy {
   const spec = ENEMY_SPECS[kind];
   const p = posAt(path, 0);
+  const hpPct = scaling ? scaling.hpPct : 100;
+  const speedPct = scaling ? scaling.speedPct : 100;
+  const damagePct = scaling ? scaling.damagePct : 100;
+  const hp = Math.max(1, Math.floor((spec.hp * hpPct) / 100));
+
   return {
     id: s.nextId++,
     kind,
-    hp: spec.hp,
-    maxHp: spec.hp,
+    hp,
+    maxHp: hp,
+    speed: Math.max(1, Math.floor((spec.speed * speedPct) / 100)),
+    blockDamage: Math.max(0, Math.floor((spec.blockDamage * damagePct) / 100)),
+    bounty: bountyFor(s.level, kind),
     dist: 0,
     x: p.x,
     y: p.y,
@@ -235,7 +255,7 @@ function tickStatuses(s: GameState): void {
 function enemySpeed(e: Enemy): number {
   if (hasStatus(e.statuses, "stun")) return 0;
   const slow = Math.min(magnitudeOf(e.statuses, "slow"), MAX_SLOW_PCT);
-  return Math.floor((ENEMY_SPECS[e.kind].speed * (100 - slow)) / 100);
+  return Math.floor((e.speed * (100 - slow)) / 100);
 }
 
 function damageEnemy(s: GameState, e: Enemy, raw: number, ignoreArmor = false): void {
@@ -251,6 +271,11 @@ function damageEnemy(s: GameState, e: Enemy, raw: number, ignoreArmor = false): 
   e.blockedBy = 0;
   s.kills += 1;
   s.score += spec.score;
+  if (e.bounty > 0) {
+    s.mana += e.bounty;
+    s.manaFromKills += e.bounty;
+    s.events.push({ kind: "bounty", amount: e.bounty, x: e.x, y: e.y, enemy: e.kind });
+  }
 }
 
 // --- movement and blocking ------------------------------------------------
@@ -359,7 +384,7 @@ function resolveMelee(s: GameState): void {
       e.blockedBy = 0;
       continue;
     }
-    blocker.hp -= ENEMY_SPECS[e.kind].blockDamage;
+    blocker.hp -= e.blockDamage;
     e.attackCooldown = ENEMY_SPECS[e.kind].attackCooldown;
   }
 

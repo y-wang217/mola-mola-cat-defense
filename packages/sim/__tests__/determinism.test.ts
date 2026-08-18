@@ -9,7 +9,7 @@ import { M0_LEVEL } from "../src/level.js";
 import { legalTileIndices } from "../src/summon.js";
 import { towerSpec } from "../src/towers.js";
 import { dist, isqrt } from "../src/fixed.js";
-import { MANA_REGEN_AMOUNT, MANA_REGEN_INTERVAL } from "../src/content.js";
+import { MANA_REGEN_AMOUNT, MANA_REGEN_INTERVAL } from "../src/economy.js";
 import { nextU32, seedRng } from "../src/rng.js";
 import { autoplay, replay, hashState, BALANCED, MIXED } from "./autoplay.js";
 import type { GameState, Input } from "../src/types.js";

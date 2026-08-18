@@ -54,10 +54,24 @@ export type SpawnDef = {
   intervalTicks: number;
 };
 
+/**
+ * Per-wave stat scaling, as integer percentages of the enemy's base spec.
+ * Enemy stats are per-kind, so this is the only way to soften the opening
+ * waves without weakening the same archetypes later in the run.
+ */
+export type WaveScaling = {
+  hpPct: number;
+  speedPct: number;
+  /** Damage dealt to blocking towers. */
+  damagePct: number;
+};
+
 export type WaveDef = {
   spawns: SpawnDef[];
   /** Ticks of breathing room before this wave auto-starts. */
   prepTicks: number;
+  /** Omitted means 100% across the board. */
+  scaling?: WaveScaling;
 };
 
 export type LevelDef = {
@@ -84,6 +98,14 @@ export type Enemy = {
   kind: EnemyKind;
   hp: number;
   maxHp: number;
+  /**
+   * Resolved at spawn from the kind's spec times the wave's scaling, so a
+   * softened opening wave does not weaken the archetype anywhere else.
+   */
+  speed: number;
+  blockDamage: number;
+  /** Mana paid to the player when this enemy dies. See economy.ts. */
+  bounty: number;
   /** Distance travelled along the lane, fixed-point. */
   dist: number;
   x: number;
@@ -148,6 +170,7 @@ export type RunStatus = "prep" | "wave" | "won" | "lost";
 /** Surfaced to the UI for one tick. Never drives sim logic. */
 export type SimEvent =
   | { kind: "no_room"; towerId: TowerId }
+  | { kind: "bounty"; amount: number; x: number; y: number; enemy: EnemyKind }
   | { kind: "summoned"; towerId: TowerId; tileIndex: number }
   | { kind: "merged"; towerId: TowerId; tier: number }
   | { kind: "blocker_died"; tileIndex: number };
@@ -161,6 +184,13 @@ export type GameState = {
   roster: TowerId[];
   status: RunStatus;
   mana: number;
+  /**
+   * Lifetime income by source. Not used by any rule — they exist so the split
+   * between the tick floor and kill bounties is measurable rather than
+   * inferred, which is the whole question the income model has to answer.
+   */
+  manaFromTick: number;
+  manaFromKills: number;
   /** What the next summon costs. Escalates per summon and never resets. */
   summonCost: number;
   summonsUsed: number;

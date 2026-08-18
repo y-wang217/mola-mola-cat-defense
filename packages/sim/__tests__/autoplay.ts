@@ -19,9 +19,20 @@ export type Policy = {
   merge: boolean;
   /** Sell the weakest tower when the board is full and mana is piling up. */
   sellWhenFull: boolean;
+  /**
+   * Refuse to summon until this tick. Used to model a SLOPPY run: the player
+   * fumbles the opening, leaks the first waves, and then has to climb out of it
+   * on whatever income the model gives them. Recovery vs spiral is the whole
+   * question the income split has to answer.
+   */
+  summonFromTick: number;
+  /** Stop summoning after this many. Models a player who does almost nothing. */
+  maxSummons: number;
 };
 
-export const DEFAULT_POLICY: Policy = { merge: true, sellWhenFull: true };
+export const DEFAULT_POLICY: Policy = {
+  merge: true, sellWhenFull: true, summonFromTick: 0, maxSummons: Number.MAX_SAFE_INTEGER,
+};
 
 export type PlayResult = {
   final: GameState;
@@ -38,6 +49,8 @@ export function autoplay(
   roster: TowerId[],
   policy: Policy = DEFAULT_POLICY,
   maxTicks = 30 * 60 * 12,
+  /** Stop early once this holds — used to sample mid-run state. */
+  until?: (s: GameState) => boolean,
 ): PlayResult {
   let s = createInitialState(level, roster);
   const inputLog: { tick: number; inputs: Input[] }[] = [];
@@ -48,6 +61,7 @@ export function autoplay(
   let noRoom = 0;
 
   while (s.status !== "won" && s.status !== "lost" && ticks < maxTicks) {
+    if (until && until(s)) break;
     const inputs: Input[] = [];
 
     if (policy.merge) {
@@ -65,7 +79,7 @@ export function autoplay(
       }
     }
 
-    if (s.mana >= s.summonCost) {
+    if (s.tick >= policy.summonFromTick && summons < policy.maxSummons && s.mana >= s.summonCost) {
       inputs.push({ tick: s.tick, kind: "summon", payload: {} });
       summons++;
     }
@@ -156,7 +170,7 @@ export const STATUS_HEAVY: TowerId[] = ["frost", "venom", "hex", "rasp", "bulwar
  * rejected is never counted as one that happened.
  */
 export const GOLDEN_ROSTER: TowerId[] = ["frost", "venom", "hex", "rasp", "bulwark"];
-export const GOLDEN_TICKS = 6000;
+export const GOLDEN_TICKS = 7200;
 
 export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: number) {
   let s = createInitialState(level, roster);
@@ -175,7 +189,7 @@ export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: numb
     if (s.tick % 40 === 0 && s.mana >= s.summonCost) {
       inputs.push({ tick: s.tick, kind: "summon", payload: {} });
     }
-    if ((s.tick === 800 || s.tick === 1400) && s.towers.length > 1) {
+    if ((s.tick === 2000 || s.tick === 3400) && s.towers.length > 1) {
       for (const t of s.towers) {
         const partners = mergePartners(s, t.id);
         if (partners.length > 0) {
@@ -184,7 +198,7 @@ export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: numb
         }
       }
     }
-    if (!sold && s.tick === 1100 && s.towers.length > 0) {
+    if (!sold && s.tick === 2600 && s.towers.length > 0) {
       inputs.push({ tick: s.tick, kind: "sell", payload: { towerId: s.towers[0].id } });
       sells++;
       sold = true;

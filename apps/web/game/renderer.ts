@@ -9,7 +9,7 @@
  *     subtle
  */
 
-import { Application, Container, Graphics } from "pixi.js";
+import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
 import { ENEMY_SPECS, TILE, rangeAtTier, tileCentre, towerSpec } from "@siege/sim";
 import type { Enemy, GameState, StatusKind } from "@siege/sim";
 
@@ -66,6 +66,8 @@ export class Renderer {
   private world = new Container();
   private staticLayer = new Graphics();
   private dynamicLayer = new Graphics();
+  private floaterLayer = new Container();
+  private floaterPool: Text[] = [];
   private selectedTowerId: number | null = null;
   private partnerIds: number[] = [];
   private built = false;
@@ -81,7 +83,7 @@ export class Renderer {
       height: 100,
     });
     canvasHost.appendChild(this.app.canvas);
-    this.world.addChild(this.staticLayer, this.dynamicLayer);
+    this.world.addChild(this.staticLayer, this.dynamicLayer, this.floaterLayer);
     this.app.stage.addChild(this.world);
     this.drawStatic(state);
     this.built = true;
@@ -248,6 +250,43 @@ export class Renderer {
     }
 
     this.app.renderer.render(this.app.stage);
+  }
+
+  /**
+   * Floating mana numbers on kill. Sized and coloured by how big the bounty was,
+   * so a brute reads as a payout without the player parsing the digits.
+   *
+   * Lifetimes are owned here, not in the sim — this is presentation.
+   */
+  drawFloaters(floaters: { amount: number; x: number; y: number; age: number; life: number }[]): void {
+    if (!this.built) return;
+
+    for (let i = 0; i < floaters.length; i++) {
+      const f = floaters[i];
+      let text = this.floaterPool[i];
+      if (!text) {
+        text = new Text({ text: "", style: new TextStyle({ fontSize: 320, fontWeight: "700" }) });
+        text.anchor.set(0.5, 1);
+        this.floaterPool.push(text);
+        this.floaterLayer.addChild(text);
+      }
+
+      const t = f.age / f.life;
+      const big = f.amount >= 50;
+      const mid = f.amount >= 15;
+      text.visible = true;
+      text.text = `+${f.amount}`;
+      text.style.fontSize = big ? 460 : mid ? 380 : 300;
+      text.style.fill = big ? 0xffd166 : mid ? 0xffe9a8 : 0xc9d4e3;
+      text.x = f.x;
+      // Drift upward and fade as it ages.
+      text.y = f.y - 200 - t * 700;
+      text.alpha = 1 - t * t;
+    }
+
+    for (let i = floaters.length; i < this.floaterPool.length; i++) {
+      this.floaterPool[i].visible = false;
+    }
   }
 
   destroy(): void {
