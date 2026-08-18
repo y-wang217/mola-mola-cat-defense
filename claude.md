@@ -40,6 +40,11 @@ the convention matrix, the whitespace map, and a ten-question rubric in §4.3.
 **Run any new mechanic through §4.3 before implementing it.** Cite section numbers
 when a design decision traces back to it.
 
+> **The doc is not in this repo yet.** M0 was built without it, which was
+> tolerable because M0 introduces no novel mechanic — only genre-standard verbs.
+> Every §-citation in this file is unverifiable until it lands, and no M1+ design
+> work should start before it does.
+
 ---
 
 ## 2. FIXED CONSTRAINTS — do not relitigate these in code review
@@ -284,9 +289,15 @@ picking silently:
 - **Retries per day.** Current lean: unlimited retries, best score counts,
   attempt count shown on the share card — preserves the ten-seconds-after-a-loss
   retry loop (research §2.6.1) while keeping the daily social hook. Not final.
-- **Income model.** Strong lean toward time-regenerating deployment resource over
-  kill-gold: no death spiral, symmetric for PvP, enables continuous deployment as
-  the moment-to-moment verb (research §2.5.1). Not yet implemented.
+- **Income model.** M0 ships **kill-gold**, chosen by the project owner on
+  2026-08-18 when M0 forced the question. Recorded plainly: this runs against the
+  lean previously stated here, which was a time-regenerating deployment resource
+  — no death spiral, symmetric for PvP, enables continuous deployment as the
+  moment-to-moment verb (research §2.5.1). Both models are implemented in
+  `packages/sim/src/content.ts` behind the `INCOME_MODEL` constant, so switching
+  is a one-line change and M0 playtest data can settle it rather than argument.
+  **Revisit before M4** — kill-gold's asymmetry bites hardest once two players'
+  ghosts race the same board.
 - **Is the game completable?** Affects whether the daily is the whole game or a
   front door to a campaign.
 - **Whether we build the social layer cosmetics require** (research §3.4.3). If
