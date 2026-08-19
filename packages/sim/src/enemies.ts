@@ -17,6 +17,16 @@
 export type EnemyKind = "runner" | "armoured" | "swarm" | "flier" | "brute" | "boss";
 
 export type EnemySpec = {
+  /**
+   * PRE-ART PLACEHOLDER, same caveat as the tower icons: emoji stand in for
+   * real art so the player can name what is attacking them without a tooltip.
+   * The flier in particular has to be unmistakable — it is the lever that makes
+   * projectile towers mandatory, and if the player cannot see that something
+   * flies, the lesson never lands.
+   */
+  icon: string;
+  /** Trash tier renders without an HP bar; the bar would be noise at this size. */
+  trash: boolean;
   hp: number;
   /** Fixed-point units per tick at 30Hz. TILE is 1000. */
   speed: number;
@@ -40,6 +50,7 @@ export const ENEMY_SPECS: Record<EnemyKind, EnemySpec> = {
   // enough shots off before it is past — a blocker buying time-in-range is the
   // answer, and that is the whole reason the melee family exists.
   runner: {
+    icon: "🏃", trash: false,
     hp: 95, speed: 148, armor: 0, blockDamage: 4, attackCooldown: 20,
     leak: 1, flying: false, score: 10, radius: 165,
   },
@@ -47,24 +58,28 @@ export const ENEMY_SPECS: Record<EnemyKind, EnemySpec> = {
   // Armour 30 floors every fast tower and badly blunts the heavy ones. Shred it,
   // poison it (poison ignores armour), or hit it with something heavy.
   armoured: {
+    icon: "🪖", trash: false,
     hp: 185, speed: 45, armor: 30, blockDamage: 8, attackCooldown: 24,
     leak: 1, flying: false, score: 15, radius: 200,
   },
 
   // Individually trivial; the threat is count. Chews through blocker HP.
   swarm: {
+    icon: "🐜", trash: true,
     hp: 30, speed: 68, armor: 0, blockDamage: 3, attackCooldown: 18,
     leak: 1, flying: false, score: 6, radius: 130,
   },
 
   // Follows the lane but cannot be blocked or engaged. Melee is irrelevant.
   flier: {
+    icon: "🦇", trash: false,
     hp: 105, speed: 84, armor: 4, blockDamage: 0, attackCooldown: 0,
     leak: 1, flying: true, score: 14, radius: 175,
   },
 
   // Slow enough to shoot, but blockDamage 26 deletes a lone tier-1 blocker.
   brute: {
+    icon: "🦍", trash: false,
     hp: 460, speed: 30, armor: 16, blockDamage: 30, attackCooldown: 30,
     leak: 2, flying: false, score: 40, radius: 265,
   },
@@ -72,6 +87,7 @@ export const ENEMY_SPECS: Record<EnemyKind, EnemySpec> = {
   // Wave 6. Armour 14 blunts raw projectile damage and the pool is too large
   // for status alone to whittle: it requires both families working together.
   boss: {
+    icon: "👹", trash: false,
     hp: 3000, speed: 24, armor: 70, blockDamage: 50, attackCooldown: 26,
     leak: 6, flying: false, score: 250, radius: 340,
   },

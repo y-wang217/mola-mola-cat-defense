@@ -77,6 +77,17 @@ export type TowerEffect = ShotEffect | BlockEffect | StatusApplyEffect;
 export type TowerSpec = {
   id: TowerId;
   name: string;
+  /**
+   * PRE-ART PLACEHOLDER. Emoji stand in for real tower art so the board reads
+   * as roles rather than coloured squares. They are not an art direction and
+   * nothing cosmetic, skinnable or themeable should be built on top of them —
+   * they exist to be deleted when real assets land.
+   *
+   * Each one is chosen from the tower's actual differentiating axis, not
+   * decoratively: targeting mode for projectiles, control role for melee,
+   * status kind for status.
+   */
+  icon: string;
   family: TowerFamily;
   tileClass: TileClass;
   /** Fixed-point. For `lane` shape this is the reach along the lane. */
@@ -90,8 +101,8 @@ export type TowerSpec = {
 export const TOWER_POOL: TowerSpec[] = [
   // ---- Projectile: platform tiles, the damage baseline ------------------
   {
-    id: "arrow", name: "Arrow", family: "projectile", tileClass: "platform",
-    range: 2100, cost: 0,
+    id: "arrow", icon: "🏹", name: "Arrow", family: "projectile", tileClass: "platform",
+    range: 2700, cost: 0,
     effect: {
       kind: "shot", targeting: "single", rangeShape: "circle", priority: "first",
       damage: 11, cooldown: 11, projectileSpeed: 420, splash: 0, pierce: 1, chain: 0,
@@ -99,8 +110,8 @@ export const TOWER_POOL: TowerSpec[] = [
     blurb: "Fast, single target. Armour blunts it.",
   },
   {
-    id: "mortar", name: "Mortar", family: "projectile", tileClass: "platform",
-    range: 2400, cost: 0,
+    id: "mortar", icon: "💥", name: "Mortar", family: "projectile", tileClass: "platform",
+    range: 2600, cost: 0,
     effect: {
       kind: "shot", targeting: "splash", rangeShape: "circle", priority: "strongest",
       damage: 54, cooldown: 48, projectileSpeed: 230, splash: 950, pierce: 1, chain: 0,
@@ -108,8 +119,8 @@ export const TOWER_POOL: TowerSpec[] = [
     blurb: "Slow, heavy, splash. Beats armour and packs.",
   },
   {
-    id: "lance", name: "Lance", family: "projectile", tileClass: "platform",
-    range: 2100, cost: 0,
+    id: "lance", icon: "🔫", name: "Lance", family: "projectile", tileClass: "platform",
+    range: 2900, cost: 0,
     effect: {
       kind: "shot", targeting: "pierce", rangeShape: "lane", priority: "first",
       damage: 30, cooldown: 27, projectileSpeed: 620, splash: 0, pierce: 3, chain: 0,
@@ -117,8 +128,8 @@ export const TOWER_POOL: TowerSpec[] = [
     blurb: "Pierces three down the lane. Loves a queue.",
   },
   {
-    id: "tesla", name: "Tesla", family: "projectile", tileClass: "platform",
-    range: 1950, cost: 0,
+    id: "tesla", icon: "⚡", name: "Tesla", family: "projectile", tileClass: "platform",
+    range: 2500, cost: 0,
     effect: {
       kind: "shot", targeting: "chain", rangeShape: "circle", priority: "weakest",
       damage: 17, cooldown: 24, projectileSpeed: 700, splash: 0, pierce: 1, chain: 3,
@@ -128,7 +139,7 @@ export const TOWER_POOL: TowerSpec[] = [
 
   // ---- Melee: lane tiles, control not damage ---------------------------
   {
-    id: "bulwark", name: "Bulwark", family: "melee", tileClass: "path",
+    id: "bulwark", icon: "🗿", name: "Bulwark", family: "melee", tileClass: "path",
     range: 900, cost: 0,
     effect: {
       kind: "block", hp: 380, blockCount: 3, attackDamage: 5, attackCooldown: 22,
@@ -138,7 +149,7 @@ export const TOWER_POOL: TowerSpec[] = [
     blurb: "Holds three. Deep pool, regenerates.",
   },
   {
-    id: "warden", name: "Warden", family: "melee", tileClass: "path",
+    id: "warden", icon: "🛡️", name: "Warden", family: "melee", tileClass: "path",
     range: 900, cost: 0,
     effect: {
       kind: "block", hp: 270, blockCount: 3, attackDamage: 4, attackCooldown: 20,
@@ -148,7 +159,7 @@ export const TOWER_POOL: TowerSpec[] = [
     blurb: "Holds three. Thinner, hits a touch faster.",
   },
   {
-    id: "thorn", name: "Thorn", family: "melee", tileClass: "path",
+    id: "thorn", icon: "🧨", name: "Thorn", family: "melee", tileClass: "path",
     range: 900, cost: 0,
     effect: {
       kind: "block", hp: 200, blockCount: 2, attackDamage: 8, attackCooldown: 18,
@@ -160,8 +171,8 @@ export const TOWER_POOL: TowerSpec[] = [
 
   // ---- Status: platform tiles, force multipliers ------------------------
   {
-    id: "frost", name: "Frost", family: "status", tileClass: "platform",
-    range: 2000, cost: 0,
+    id: "frost", icon: "❄️", name: "Frost", family: "status", tileClass: "platform",
+    range: 2900, cost: 0,
     effect: {
       kind: "apply_status", status: "slow", magnitude: 30, durationTicks: 45,
       cooldown: 20, mode: "aura", maxTargets: 0, damage: 0,
@@ -169,17 +180,21 @@ export const TOWER_POOL: TowerSpec[] = [
     blurb: "Aura. Slows everything nearby.",
   },
   {
-    id: "venom", name: "Venom", family: "status", tileClass: "platform",
-    range: 2100, cost: 0,
+    id: "venom", icon: "☠️", name: "Venom", family: "status", tileClass: "platform",
+    range: 2900, cost: 0,
     effect: {
       kind: "apply_status", status: "poison", magnitude: 2, durationTicks: 90,
-      cooldown: 30, mode: "targeted", maxTargets: 2, damage: 0,
+      // Single target, not two: poison is the only standalone damage in the
+      // status family, and the generous range gives it far more uptime than it
+      // used to have. Two targets made a status-only board self-sufficient,
+      // which is exactly what this family must never be.
+      cooldown: 30, mode: "targeted", maxTargets: 1, damage: 0,
     },
     blurb: "Poison stacks and ignores armour entirely.",
   },
   {
-    id: "hex", name: "Hex", family: "status", tileClass: "platform",
-    range: 2100, cost: 0,
+    id: "hex", icon: "🎯", name: "Hex", family: "status", tileClass: "platform",
+    range: 2900, cost: 0,
     effect: {
       kind: "apply_status", status: "vulnerable", magnitude: 50, durationTicks: 60,
       cooldown: 28, mode: "targeted", maxTargets: 1, damage: 0,
@@ -187,8 +202,8 @@ export const TOWER_POOL: TowerSpec[] = [
     blurb: "Marks one target to take 50% more damage.",
   },
   {
-    id: "rasp", name: "Rasp", family: "status", tileClass: "platform",
-    range: 2000, cost: 0,
+    id: "rasp", icon: "🔨", name: "Rasp", family: "status", tileClass: "platform",
+    range: 2900, cost: 0,
     effect: {
       kind: "apply_status", status: "armor_shred", magnitude: 14, durationTicks: 55,
       cooldown: 24, mode: "aura", maxTargets: 0, damage: 0,

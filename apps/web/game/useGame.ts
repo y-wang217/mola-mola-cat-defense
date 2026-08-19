@@ -33,6 +33,7 @@ export type HudTower = {
   id: number;
   towerId: TowerId;
   name: string;
+  icon: string;
   family: string;
   tileIndex: number;
   tier: number;
@@ -81,6 +82,7 @@ function toHud(s: GameState, selectedId: number | null): Hud {
         id: t.id,
         towerId: t.towerId,
         name: spec.name,
+        icon: spec.icon,
         family: spec.family,
         tileIndex: t.tileIndex,
         tier: t.tier,

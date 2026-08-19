@@ -66,6 +66,9 @@ export class Renderer {
   private world = new Container();
   private staticLayer = new Graphics();
   private dynamicLayer = new Graphics();
+  private iconLayer = new Container();
+  private iconPool: Text[] = [];
+  private iconUsed = 0;
   private floaterLayer = new Container();
   private floaterPool: Text[] = [];
   private selectedTowerId: number | null = null;
@@ -83,7 +86,7 @@ export class Renderer {
       height: 100,
     });
     canvasHost.appendChild(this.app.canvas);
-    this.world.addChild(this.staticLayer, this.dynamicLayer, this.floaterLayer);
+    this.world.addChild(this.staticLayer, this.dynamicLayer, this.iconLayer, this.floaterLayer);
     this.app.stage.addChild(this.world);
     this.drawStatic(state);
     this.built = true;
@@ -163,11 +166,10 @@ export class Renderer {
       const t = cur.towers.find((x) => x.id === this.selectedTowerId);
       if (t) {
         const spec = towerSpec(t.towerId);
-        if (spec.effect.kind !== "block") {
-          g.circle(t.x, t.y, rangeAtTier(spec.range, t.tier));
-          g.fill({ color: COLORS.range, alpha: 0.07 });
-          g.stroke({ width: 20, color: COLORS.range, alpha: 0.45 });
-        }
+        const melee = spec.effect.kind === "block";
+        g.circle(t.x, t.y, rangeAtTier(spec.range, t.tier));
+        g.fill({ color: melee ? COLORS.melee : COLORS.range, alpha: 0.07 });
+        g.stroke({ width: 20, color: melee ? COLORS.melee : COLORS.range, alpha: 0.45 });
       }
     }
 
@@ -177,19 +179,22 @@ export class Renderer {
       const partner = this.partnerIds.includes(t.id);
       const size = spec.family === "melee" ? TILE * 0.58 : TILE * 0.5;
 
+      // Family is the plate colour; the glyph on top carries the role.
       g.roundRect(t.x - size / 2, t.y - size / 2, size, size, TILE * 0.1);
-      g.fill({ color: FAMILY_COLOR[spec.family] ?? 0xffffff });
+      g.fill({ color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.22 });
+      g.stroke({ width: 34, color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.9 });
 
       if (partner || selected) {
         g.roundRect(t.x - size * 0.72, t.y - size * 0.72, size * 1.44, size * 1.44, TILE * 0.14);
         g.stroke({ width: 46, color: partner ? COLORS.merge : 0xffffff, alpha: 0.95 });
       }
 
-      // Tier pips.
+      // Tier needs its own indicator: emoji cannot be tinted, so tier cannot
+      // ride on the glyph's colour. Pips below the plate.
       for (let i = 1; i < t.tier; i++) {
-        g.circle(t.x - TILE * 0.14 + i * TILE * 0.14, t.y + size / 2 + TILE * 0.11, TILE * 0.045);
+        g.circle(t.x - TILE * 0.14 + i * TILE * 0.14, t.y + size / 2 + TILE * 0.11, TILE * 0.05);
       }
-      if (t.tier > 1) g.fill({ color: 0xffffff, alpha: 0.9 });
+      if (t.tier > 1) g.fill({ color: 0xffffff, alpha: 0.95 });
 
       // Blockers carry a health bar — watching it fall is the warning that a
       // leak is coming.
@@ -205,12 +210,14 @@ export class Renderer {
 
     for (const e of cur.enemies) {
       const p = prevEnemies.get(e.id);
-      const x = p ? lerp(p.x, e.x, alpha) : e.x;
-      const y = p ? lerp(p.y, e.y, alpha) : e.y;
+      const off = engagedOffset(e);
+      const x = (p ? lerp(p.x, e.x, alpha) : e.x) + off.x;
+      const y = (p ? lerp(p.y, e.y, alpha) : e.y) + off.y;
       const spec = ENEMY_SPECS[e.kind];
 
       g.circle(x, y, spec.radius);
-      g.fill({ color: ENEMY_COLOR[e.kind] ?? 0xffffff });
+      g.fill({ color: ENEMY_COLOR[e.kind] ?? 0xffffff, alpha: 0.28 });
+      g.stroke({ width: 34, color: ENEMY_COLOR[e.kind] ?? 0xffffff, alpha: 0.95 });
 
       if (spec.flying) {
         // Fliers get a halo: they are the enemy blockers cannot touch.
@@ -229,9 +236,16 @@ export class Renderer {
         g.stroke({ width: 44, color: COLORS.engaged, alpha: 0.9 });
       }
 
+      // Status conveyance is an OUTLINE plus pips, never a tint on the glyph.
+      if (e.statuses.length > 0) {
+        const top = e.statuses[0].kind;
+        g.circle(x, y, spec.radius + 60);
+        g.stroke({ width: 50, color: STATUS_COLOR[top], alpha: 0.9 });
+      }
       drawStatusPips(g, e, x, y, spec.radius);
 
-      if (e.hp < e.maxHp) {
+      // Trash tier gets no bar — at that size it is noise, not information.
+      if (!spec.trash && e.hp < e.maxHp) {
         const w = spec.radius * 2.2;
         const top = y - spec.radius - 150;
         g.rect(x - w / 2, top, w, 70);
@@ -240,6 +254,24 @@ export class Renderer {
         g.fill({ color: COLORS.hp });
       }
     }
+
+    // Glyphs last so they sit above the geometry.
+    this.iconUsed = 0;
+    for (const t of cur.towers) {
+      this.glyph(towerSpec(t.towerId).icon, t.x, t.y, TILE * 0.34);
+    }
+    for (const e of cur.enemies) {
+      const p = prevEnemies.get(e.id);
+      const spec = ENEMY_SPECS[e.kind];
+      const off = engagedOffset(e);
+      this.glyph(
+        spec.icon,
+        (p ? lerp(p.x, e.x, alpha) : e.x) + off.x,
+        (p ? lerp(p.y, e.y, alpha) : e.y) + off.y,
+        spec.radius * 1.5,
+      );
+    }
+    for (let i = this.iconUsed; i < this.iconPool.length; i++) this.iconPool[i].visible = false;
 
     for (const proj of cur.projectiles) {
       const p = prevProjectiles.get(proj.id);
@@ -250,6 +282,27 @@ export class Renderer {
     }
 
     this.app.renderer.render(this.app.stage);
+  }
+
+  /**
+   * Pooled emoji glyph. Emoji cannot be reliably tinted, so every colour cue —
+   * family, tier, status — is drawn as geometry around the glyph rather than
+   * applied to it.
+   */
+  private glyph(text: string, x: number, y: number, size: number): void {
+    let t = this.iconPool[this.iconUsed];
+    if (!t) {
+      t = new Text({ text: "", style: new TextStyle({ fontSize: 400 }) });
+      t.anchor.set(0.5);
+      this.iconPool.push(t);
+      this.iconLayer.addChild(t);
+    }
+    t.visible = true;
+    t.text = text;
+    t.style.fontSize = size;
+    t.x = x;
+    t.y = y;
+    this.iconUsed++;
   }
 
   /**
@@ -294,6 +347,20 @@ export class Renderer {
     this.built = false;
     this.app.destroy(true, { children: true });
   }
+}
+
+/**
+ * Blocked enemies stop AT the blocker's tile centre, which in the sim is the
+ * same point the tower occupies — so drawn literally they vanish underneath it
+ * and the single clearest readout in the game becomes a smudge. Fan them around
+ * the tile instead. Render-only: the sim position is untouched.
+ */
+function engagedOffset(e: Enemy): { x: number; y: number } {
+  if (e.blockedBy === 0) return { x: 0, y: 0 };
+  const slot = e.id % 3;
+  const angle = (slot / 3) * Math.PI * 2 + Math.PI / 2;
+  const radius = 430;
+  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
 }
 
 /** A small stack of coloured dots under the enemy, one per active status. */

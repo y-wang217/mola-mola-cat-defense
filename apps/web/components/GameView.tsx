@@ -6,11 +6,13 @@ import type { TowerId } from "@siege/sim";
 import { useGame } from "@/game/useGame";
 import Hud from "./Hud";
 import RosterSelect from "./RosterSelect";
+import WavePanel from "./WavePanel";
 
+/** Family stays a colour cue, but as a border — emoji cannot be tinted. */
 const FAMILY_DOT: Record<string, string> = {
-  projectile: "bg-sky-400",
-  melee: "bg-amber-400",
-  status: "bg-violet-400",
+  projectile: "border-sky-400",
+  melee: "border-amber-400",
+  status: "border-violet-400",
 };
 
 /**
@@ -59,6 +61,7 @@ export default function GameView() {
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-2">
       <Hud hud={hud} />
+      <WavePanel waveIndex={hud.wave - 1} status={hud.status} prepSeconds={hud.prepSeconds} />
 
       <div className="relative min-h-0 flex-1">
         <div ref={host} className="absolute inset-0 overflow-hidden rounded-xl" />
@@ -122,11 +125,11 @@ export default function GameView() {
             return (
               <div
                 key={id}
-                className="flex flex-1 items-center gap-1 rounded-md bg-slate-900 px-1.5 py-1"
-                title={spec.blurb}
+                className={`flex flex-1 flex-col items-center rounded-md border-b-2 bg-slate-900 px-1 py-1 ${FAMILY_DOT[spec.family]}`}
+                title={`${spec.name} — ${spec.blurb}`}
               >
-                <span className={`h-2 w-2 shrink-0 rounded-full ${FAMILY_DOT[spec.family]}`} />
-                <span className="truncate text-[11px] text-slate-300">{spec.name}</span>
+                <span className="text-sm leading-none">{spec.icon}</span>
+                <span className="mt-0.5 truncate text-[10px] leading-none text-slate-400">{spec.name}</span>
               </div>
             );
           })}
@@ -136,7 +139,7 @@ export default function GameView() {
           <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1 rounded-lg bg-slate-900 px-3 py-2">
               <p className="truncate text-sm font-semibold">
-                {selected.name} · tier {selected.tier}
+                {selected.icon} {selected.name} · tier {selected.tier}
               </p>
               <p className="text-[11px] text-slate-400">
                 {hud.partners.length > 0
