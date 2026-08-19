@@ -33,17 +33,50 @@ The daily solves three problems that would otherwise sink the project:
   the Arknights Contingency Contract structure applied as the core spine rather
   than a side mode.
 
-### Design reference
+### Design checklist — run any proposed mechanic through this before building it
 
-`docs/TD_market_research_v1.md` is the industry baseline (~15k words). It contains
-the convention matrix, the whitespace map, and a ten-question rubric in §4.3.
-**Run any new mechanic through §4.3 before implementing it.** Cite section numbers
-when a design decision traces back to it.
+1. **What is the player doing while the wave walks?** If the answer is "watching,"
+   the idea isn't finished. Low moment-to-moment agency is this genre's one
+   structural weakness; every good TD is a different answer to it. Deliberation
+   counts as doing — giving the player information worth thinking about is a valid
+   answer. Continuous manual aiming is not.
+2. **Is this standard, rare, or already abandoned in the genre?** If it's rare,
+   establish *why* it's rare before assuming it's an opportunity. "We'd execute it
+   better" is not an answer.
+3. **Does it survive cosmetics-only?** If the mechanic depends on selling power,
+   selling time, or selling a collection, it does not survive — however good it is.
+4. **Does it survive async PvP?** Is income symmetric and deterministic? Is a run
+   under five minutes? Does it work with no live opponent present?
+5. **What is the content cost per unit of player-facing variety?** Prefer systems
+   that generate variety (modifiers, seeds, player authorship, PvP) over content
+   that must be hand-made forever. We cannot run a content treadmill.
+6. **What stops 40 towers collapsing to 5?** If there's no role-enforcement
+   mechanism — flying-only enemies, armour requiring specific damage types, tiles
+   only certain units can occupy — the variety is nominal.
+7. **What happens in the ten seconds after a loss?** If it isn't immediate and
+   compelling, retention will be poor.
+8. **Who sees the cosmetic?** If nobody sees it, nobody buys it.
+9. **Would someone who has played Kingdom Rush, Bloons, Arknights and Rush Royale
+   recognise this as new within thirty seconds?** If not, we're competing on
+   execution against studios with a decade of head start and a live-ops team.
 
-> **The doc is not in this repo yet.** M0 was built without it, which was
-> tolerable because M0 introduces no novel mechanic — only genre-standard verbs.
-> Every §-citation in this file is unverifiable until it lands, and no M1+ design
-> work should start before it does.
+### Known dead ends — do not propose these
+
+- **Continuous manual aiming as the core verb** (the "Zuma-like" TD). Twenty years,
+  no commercial validation anywhere, and a coherent reason why: aiming demands
+  continuous attention on one point while strategy demands looking away. The two
+  loops fight each other.
+- **Constant manual focus-fire.** Practitioner consensus is that it isn't fun and
+  feels twitchy. Turning it into a cooldown ability is fine; making it a constant
+  demand is not.
+- **Four-player real-time TD battle royale.** Tried at full scale by a major Korean
+  publisher (Defense Derby, 2023–2025), shut down in 22 months.
+- **Idle/incremental TD under our model.** That branch's economics exist to sell
+  time. Remove the time-selling and the exponential curve has no reason to exist.
+- **Wide flat rosters with no role enforcement.** Reliably collapse to a five-unit
+  meta regardless of balance effort.
+- **Retroactively monetizing anything that was previously free.** The single most
+  reliable way to produce a community crisis.
 
 ---
 
@@ -147,9 +180,6 @@ Do not add dependencies without asking. This stack is deliberately small.
 /packages/levels           Offline level generator + vetted level JSON
   generate.ts              Bulk generator, run manually
   vetted/YYYY-MM-DD.json   Committed, hand-approved levels
-
-/docs
-  TD_market_research_v1.md Industry baseline. Read §4.3 before designing.
 ```
 
 **The dependency arrow points one way:** `web → sim`. The sim never imports from
@@ -283,11 +313,12 @@ whether M4 is genuinely done.
 - Trusting a client-submitted score.
 - Building a settings menu, account system, or shop before M4.
 - Balancing by feel. Instrument first — wave-reached, placements, restarts,
-  abandons — then tune. Level pass rate correlates with churn (research §2.1.1);
-  we tune against data from day one.
+  abandons — then tune. Level pass rate is a usable proxy for difficulty and it
+  correlates directly with churn, so difficulty gets measured, not guessed.
 - Any mechanic that only works if someone pays, grinds, or waits. It violates §2.
 - New tower types as the answer to "the game feels samey." Design **enemies**
-  first — enemy variety is what forces tower diversity (research §2.3.3).
+  first. A roster of towers is only as diverse as the set of problems the game
+  poses; adding towers without adding problems just adds art cost.
 
 ---
 
@@ -296,21 +327,36 @@ whether M4 is genuinely done.
 These are genuinely unresolved. If code forces a decision, surface it rather than
 picking silently:
 
-- **Retries per day.** Current lean: unlimited retries, best score counts,
-  attempt count shown on the share card — preserves the ten-seconds-after-a-loss
-  retry loop (research §2.6.1) while keeping the daily social hook. Not final.
-- **Income model.** Settled for M0 by the summon rework: **time-regenerating
-  mana**, fixed rate, independent of performance. This returns to the lean
-  originally recorded here — no death spiral, symmetric for the async PvP due at
-  M4, and it makes *timing* the resource decision rather than efficiency. The
-  kill-gold experiment recorded here on 2026-08-18 never reached playtest and is
-  moot; the `INCOME_MODEL` constant it lived behind has been deleted along with
-  gold itself. Constants are in `packages/sim/src/content.ts`.
+- **Retries per day.** A strict one-shot daily (the Wordle model) kills the
+  retry loop, which is the engine of TD retention — the reward for failing is
+  knowing what wave 14 sends. Current lean: unlimited retries, best score counts,
+  attempt count shown on the share card. Keeps both the retry loop and the daily
+  social hook. Not final.
+- **Income model — RESOLVED for M0, still open past it.** The reasoning stands:
+  kill-gold links income to performance, which creates a death spiral — falling
+  behind lowers income, which guarantees falling further behind — and it is
+  unusable in PvP because whoever gets ahead early gets richer. Time-based income
+  is symmetric and makes deployment a continuous verb.
+
+  What shipped is **both**, with one dial. `KILL_MANA_SHARE` in
+  `packages/sim/src/economy.ts` splits a fixed target income between a guaranteed
+  time-based floor and kill bounties scaled by enemy size. At 0.0 it is pure
+  time-based; at 1.0 pure kill-gold. It is set to **0.3**, on measured evidence
+  recorded in that file: at 0.6 a family-spanning roster went from an 11-life win
+  to a wave-4 loss and sloppy runs spiralled, because kill-funding pays for damage
+  and so penalises support-heavy rosters. At 1.0 the model collapses outright.
+
+  The cost main flagged is real and now applies: the difficulty curve is authored
+  against a known income schedule, so changing the dial requires re-tuning waves.
 - **Is the game completable?** Affects whether the daily is the whole game or a
-  front door to a campaign.
-- **Whether we build the social layer cosmetics require** (research §3.4.3). If
-  the answer ends up being no, the monetization model needs revisiting, not the
-  social features.
+  front door to a campaign. Premium games are free to have an ending; live games
+  usually aren't. We haven't decided which we are.
+- **Whether we build the social layer cosmetics require.** Cosmetics are fashion,
+  and fashion needs an audience — skins sell in socially ubiquitous games and fail
+  in niche ones where you never encounter anyone you know. That means clans,
+  persistent identity, spectating, replays and shareable moments are prerequisites
+  for the business model, not polish. If we decide we won't build them, the
+  monetization model needs revisiting rather than the social features.
 
 ---
 
@@ -319,5 +365,4 @@ picking silently:
 - Honest assessment over optimistic framing. If an approach is likely to fail,
   say so plainly with the reason.
 - Small commits. Sim changes are isolated from render changes.
-- When a design choice traces to the research doc, cite the section.
 - Ask before adding a dependency, a service, or a milestone.
