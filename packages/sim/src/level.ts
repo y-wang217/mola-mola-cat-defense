@@ -85,76 +85,126 @@ function buildTerrain(): Terrain {
 }
 
 /**
- * Six waves, roughly three and a half to four minutes.
+ * Ten waves, run back to back with no break between them.
+ *
+ * Six waves plus breaks used to take about four minutes of wall clock. Removing
+ * the breaks and doubling the timescale would have collapsed the same content
+ * into well under a minute, which is not a run — so the level is longer in
+ * content and shorter in wall clock. Measured numbers are in the commit message.
  *
  * Each wave leans on one archetype so a missing family shows up as a specific,
- * comprehensible failure rather than a slow bleed. Wave 6 carries the boss,
- * which no single family can beat.
+ * comprehensible failure rather than a slow bleed. Waves 1-3 are the safety
+ * band; the boss lands on wave 10 and no single family can beat it.
+ *
+ * Authoring rules for the continuous handover, learned by measuring it:
+ *   - a wave's span is its own spawn schedule, since the next one starts the
+ *     tick this one finishes. Total run length is the sum of the spans plus the
+ *     walk time of the last stragglers.
+ *   - the first group of a wave starts 20-60 ticks in, which is the only
+ *     breathing room in the handover. Keep it: at zero the two waves' fronts
+ *     arrive on the same tick and read as one mass.
+ *   - spread groups across a wave rather than stacking them at tick 20. An
+ *     archetype arriving on its own is legible; four at once is noise.
  */
 export const M0_LEVEL: LevelDef = {
   id: "m0-rework",
   seed: 20260818,
   terrain: buildTerrain(),
   waves: [
-    // 1 — runners, heavily softened. A player who summons NOTHING must survive
-    // this, so the count is small enough that even a completely empty board
-    // leaks only a fraction of the life pool.
-    //
-    // Counts ARE cut here, against the usual "keep the mana faucet flowing"
-    // instinct, and that is safe only because killManaShare sits at 0.3: the
-    // 6/s tick floor plus the starting grant funds the first several summons
-    // without needing a single kill. If the dial ever moves toward 1.0 these
-    // counts must come back up or the opening starves.
+    // 1 — runners, heavily softened. THE SAFETY BAND STARTS HERE. With five
+    // lives instead of eighteen a leak is no longer absorbable, so waves 1-3
+    // are cut in count and in HP until a player making reasonable summons does
+    // not leak at all. This is early safety bought with wave content, not with
+    // a bigger life pool — more lives is what made leaks meaningless.
     {
-      prepTicks: 300,
       scaling: { hpPct: 55, speedPct: 78, damagePct: 50 },
-      spawns: [{ kind: "runner", count: 4, startTick: 30, intervalTicks: 34 }],
+      spawns: [{ kind: "runner", count: 5, startTick: 90, intervalTicks: 105 }],
     },
-    // 2 — swarm, still gentle. Two summons must clear this comfortably WHATEVER
-    // the roster drew — including the ~36% case where both draws are support
-    // towers that deal no damage at all. Sized so that board still survives.
+    // 2 — swarm, still gentle. Two summons must clear this WHATEVER the roster
+    // drew, including the case where both draws are support towers that deal no
+    // damage at all.
     {
-      prepTicks: 240,
-      scaling: { hpPct: 70, speedPct: 88, damagePct: 60 },
+      scaling: { hpPct: 60, speedPct: 85, damagePct: 60 },
       spawns: [
-        { kind: "swarm", count: 7, startTick: 30, intervalTicks: 18 },
-        { kind: "runner", count: 2, startTick: 260, intervalTicks: 28 },
+        { kind: "swarm", count: 10, startTick: 30, intervalTicks: 45 },
+        { kind: "runner", count: 3, startTick: 400, intervalTicks: 60 },
       ],
     },
-    // 3 — armoured. Fast-and-weak towers hit the 1-damage floor here.
+    // 3 — volume, with a TASTE of armour rather than a wall of it. Armour is
+    // a flat reduction, so a wave's hpPct cannot soften it: two armoured here
+    // teach the lesson, and wave 5 is where it is charged for. The safety band
+    // ends with this wave.
     {
-      prepTicks: 240,
+      scaling: { hpPct: 85, speedPct: 95, damagePct: 80 },
       spawns: [
-        { kind: "armoured", count: 6, startTick: 20, intervalTicks: 42 },
-        { kind: "swarm", count: 10, startTick: 120, intervalTicks: 15 },
+        { kind: "swarm", count: 10, startTick: 30, intervalTicks: 45 },
+        { kind: "armoured", count: 2, startTick: 120, intervalTicks: 140 },
+        { kind: "runner", count: 4, startTick: 250, intervalTicks: 70 },
       ],
     },
-    // 4 — fliers. Blockers are irrelevant; projectile or you leak.
+    // 4 — full strength, and fliers. Blockers are irrelevant; projectile or you
+    // leak. From here a bad board is punished.
     {
-      prepTicks: 240,
       spawns: [
-        { kind: "flier", count: 8, startTick: 20, intervalTicks: 28 },
-        { kind: "runner", count: 7, startTick: 190, intervalTicks: 20 },
+        { kind: "flier", count: 7, startTick: 20, intervalTicks: 60 },
+        { kind: "runner", count: 4, startTick: 300, intervalTicks: 50 },
       ],
     },
-    // 5 — brutes. A lone tier-1 blocker dies; needs vulnerable plus sustain.
+    // 5 — armour proper, at full strength, with volume behind it. Fast-and-weak
+    // towers hit the 1-damage floor; shred it, poison it, or hit it heavy.
     {
-      prepTicks: 270,
       spawns: [
-        { kind: "brute", count: 3, startTick: 20, intervalTicks: 90 },
-        { kind: "armoured", count: 5, startTick: 60, intervalTicks: 46 },
-        { kind: "flier", count: 6, startTick: 150, intervalTicks: 30 },
-        { kind: "runner", count: 6, startTick: 240, intervalTicks: 20 },
+        { kind: "armoured", count: 5, startTick: 20, intervalTicks: 100 },
+        { kind: "swarm", count: 10, startTick: 140, intervalTicks: 40 },
+        { kind: "runner", count: 3, startTick: 440, intervalTicks: 55 },
       ],
     },
-    // 6 — boss, escorted. Two families minimum.
+    // 6 — brutes. A lone tier-1 blocker dies; needs vulnerable plus sustain.
     {
-      prepTicks: 300,
       spawns: [
-        { kind: "boss", count: 1, startTick: 20, intervalTicks: 1 },
-        { kind: "swarm", count: 15, startTick: 60, intervalTicks: 13 },
-        { kind: "flier", count: 8, startTick: 180, intervalTicks: 22 },
-        { kind: "armoured", count: 5, startTick: 260, intervalTicks: 36 },
+        { kind: "brute", count: 2, startTick: 20, intervalTicks: 290 },
+        { kind: "armoured", count: 2, startTick: 90, intervalTicks: 140 },
+        { kind: "flier", count: 4, startTick: 220, intervalTicks: 85 },
+        { kind: "runner", count: 3, startTick: 420, intervalTicks: 55 },
+      ],
+    },
+    // 7 — air and speed. Punishes a board that answered wave 6 with blockers.
+    {
+      spawns: [
+        { kind: "flier", count: 9, startTick: 20, intervalTicks: 65 },
+        { kind: "runner", count: 7, startTick: 170, intervalTicks: 55 },
+        { kind: "swarm", count: 9, startTick: 340, intervalTicks: 38 },
+      ],
+    },
+    // 8 — everything at once, at full strength. This is where a board that has
+    // been coasting on one family should come apart.
+    {
+      spawns: [
+        { kind: "brute", count: 2, startTick: 20, intervalTicks: 270 },
+        { kind: "armoured", count: 4, startTick: 70, intervalTicks: 115 },
+        { kind: "flier", count: 5, startTick: 220, intervalTicks: 70 },
+        { kind: "swarm", count: 8, startTick: 390, intervalTicks: 38 },
+      ],
+    },
+    // 9 — the pre-boss squeeze. Three brutes plus volume.
+    {
+      spawns: [
+        { kind: "brute", count: 2, startTick: 20, intervalTicks: 250 },
+        { kind: "flier", count: 7, startTick: 110, intervalTicks: 65 },
+        { kind: "runner", count: 6, startTick: 230, intervalTicks: 55 },
+        { kind: "swarm", count: 8, startTick: 340, intervalTicks: 42 },
+      ],
+    },
+    // 10 — boss, escorted, and it arrives while wave 9's tail is still walking.
+    // Two families minimum.
+    {
+      spawns: [
+        { kind: "brute", count: 2, startTick: 20, intervalTicks: 250 },
+        { kind: "boss", count: 1, startTick: 60, intervalTicks: 1 },
+        { kind: "armoured", count: 2, startTick: 120, intervalTicks: 100 },
+        { kind: "flier", count: 5, startTick: 180, intervalTicks: 70 },
+        { kind: "swarm", count: 8, startTick: 250, intervalTicks: 36 },
+        { kind: "runner", count: 4, startTick: 450, intervalTicks: 45 },
       ],
     },
   ],

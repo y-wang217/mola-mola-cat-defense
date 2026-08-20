@@ -14,7 +14,7 @@
  * documented there. Nothing in this file consumes randomness.
  */
 
-import { SCORE_PER_LIFE, SCORE_PER_WAVE, START_LIVES } from "./content.js";
+import { MAX_LIVES, SCORE_PER_LIFE, SCORE_PER_WAVE, leakDamageFor, spawnIntervalFor } from "./content.js";
 import {
   MANA_REGEN_AMOUNT,
   MANA_REGEN_INTERVAL,
@@ -50,16 +50,17 @@ export function createInitialState(level: LevelDef, roster: TowerId[]): GameStat
     rng: seedRng(level.seed),
     level,
     roster: roster.slice(),
-    status: "prep",
+    // Wave 1 is already running at tick 0. There is no opening pause: the
+    // break phase is gone and its lead-in lives in each group's startTick.
+    status: "wave",
     mana: STARTING_MANA,
     manaFromTick: 0,
     manaFromKills: 0,
     summonCost: summonCostFor(0),
     summonsUsed: 0,
-    lives: START_LIVES,
+    lives: MAX_LIVES,
     waveIndex: 0,
     waveTick: 0,
-    prepRemaining: first ? first.prepTicks : 0,
     spawnCursors: first ? first.spawns.map(() => 0) : [],
     enemies: [],
     towers: [],
@@ -87,7 +88,6 @@ function cloneState(s: GameState): GameState {
     lives: s.lives,
     waveIndex: s.waveIndex,
     waveTick: s.waveTick,
-    prepRemaining: s.prepRemaining,
     spawnCursors: s.spawnCursors.slice(),
     enemies: s.enemies.map((e) => ({
       ...e,
@@ -177,32 +177,46 @@ function regenMana(s: GameState): void {
 }
 
 /**
- * Waves auto-advance. With time-regenerating mana a manual start button would
- * let the player idle and bank unlimited mana, which is exactly the tension the
- * mana model exists to create.
+ * Waves run continuously. There is no break, no prep phase and no start button:
+ * wave N+1 begins spawning the tick wave N finishes spawning, so enemies from
+ * two waves can be walking the lane at once.
+ *
+ * Two reasons, in order. The playtest asked for a faster game and the breaks
+ * were dead air. And with time-regenerating mana, any pause the player controls
+ * lets them idle and bank, which is exactly the tension the mana model exists
+ * to create.
+ *
+ * The wave counter advances on SPAWN completion, not on a clear. Waiting for a
+ * clear would reintroduce the pause by the back door — the board would idle
+ * while the last straggler walked.
  */
 function advanceWaves(s: GameState, path: PathGeometry): void {
-  if (s.status === "prep") {
-    s.prepRemaining -= 1;
-    if (s.prepRemaining > 0) return;
-    s.status = "wave";
-    s.waveTick = 0;
-    return;
-  }
-
   s.waveTick += 1;
   const wave = s.level.waves[s.waveIndex];
   if (!wave) return;
 
   for (let i = 0; i < wave.spawns.length; i++) {
     const group = wave.spawns[i];
+    const interval = spawnIntervalFor(group.intervalTicks);
     while (s.spawnCursors[i] < group.count) {
-      const due = group.startTick + s.spawnCursors[i] * group.intervalTicks;
+      const due = group.startTick + s.spawnCursors[i] * interval;
       if (s.waveTick < due) break;
       s.enemies.push(makeEnemy(s, group.kind, path, wave.scaling));
       s.spawnCursors[i] += 1;
     }
   }
+
+  const allSpawned = wave.spawns.every((g, i) => s.spawnCursors[i] >= g.count);
+  if (!allSpawned) return;
+
+  // Wave sent in full: score it and hand straight over to the next one.
+  s.score += SCORE_PER_WAVE;
+  s.waveIndex += 1;
+  s.waveTick = 0;
+
+  const next = s.level.waves[s.waveIndex];
+  s.spawnCursors = next ? next.spawns.map(() => 0) : [];
+  if (next) s.events.push({ kind: "wave_start", wave: s.waveIndex + 1 });
 }
 
 function makeEnemy(
@@ -333,7 +347,7 @@ function moveEnemies(s: GameState, path: PathGeometry): void {
     if (e.dist >= path.total) {
       e.alive = false;
       s.leaks += 1;
-      s.lives -= ENEMY_SPECS[e.kind].leak;
+      s.lives -= leakDamageFor(e.kind);
       continue;
     }
     const at = posAt(path, e.dist);
@@ -622,24 +636,11 @@ function resolveRunState(s: GameState): void {
   }
   if (s.status !== "wave") return;
 
-  const wave = s.level.waves[s.waveIndex];
-  if (!wave) return;
+  // Wave advancement happens in advanceWaves, on spawn completion. All that is
+  // left to decide here is whether the level has run out of waves AND the board
+  // has emptied — the last stragglers still have to be dealt with.
+  if (s.waveIndex < s.level.waves.length || s.enemies.length > 0) return;
 
-  const allSpawned = wave.spawns.every((g, i) => s.spawnCursors[i] >= g.count);
-  if (!allSpawned || s.enemies.length > 0) return;
-
-  s.score += SCORE_PER_WAVE;
-  s.waveIndex += 1;
-  s.waveTick = 0;
-
-  const next = s.level.waves[s.waveIndex];
-  if (!next) {
-    s.status = "won";
-    s.score += s.lives * SCORE_PER_LIFE;
-    s.spawnCursors = [];
-    return;
-  }
-  s.status = "prep";
-  s.prepRemaining = next.prepTicks;
-  s.spawnCursors = next.spawns.map(() => 0);
+  s.status = "won";
+  s.score += s.lives * SCORE_PER_LIFE;
 }

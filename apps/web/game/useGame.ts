@@ -11,11 +11,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  GAME_SPEED_MULTIPLIER,
+  MAX_LIVES,
   MAX_TIER,
   M0_LEVEL,
   ROSTER_SIZE,
   SELL_REFUND_PCT,
-  START_LIVES,
   TICKS_PER_SECOND,
   createInitialState,
   mergePartners,
@@ -26,7 +27,16 @@ import type { GameState, Input, RunStatus, TowerId } from "@siege/sim";
 import { Renderer } from "./renderer";
 import { play } from "./audio";
 
-const TICK_MS = 1000 / TICKS_PER_SECOND;
+/**
+ * Wall-clock milliseconds per sim tick.
+ *
+ * This is where the global 2x lives. The sim's tick rate is still a fixed 30Hz
+ * and every stat in it is still denominated in ticks; the driver simply drains
+ * GAME_SPEED_MULTIPLIER ticks per 1/30s of real time. Nothing inside the sim
+ * knows, determinism is untouched, and a replay recorded at one speed
+ * reproduces byte-identically at another.
+ */
+const TICK_MS = 1000 / (TICKS_PER_SECOND * GAME_SPEED_MULTIPLIER);
 /** If the tab was backgrounded, resume — don't simulate the missing minutes. */
 const MAX_FRAME_MS = 250;
 const MESSAGE_MS = 1800;
@@ -57,7 +67,6 @@ export type Hud = {
   maxLives: number;
   wave: number;
   waveCount: number;
-  prepSeconds: number;
   score: number;
   kills: number;
   leaks: number;
@@ -108,10 +117,9 @@ function toHud(s: GameState, selectedId: number | null): Hud {
     summonCost: s.summonCost,
     canAfford: s.mana >= s.summonCost,
     lives: s.lives,
-    maxLives: START_LIVES,
+    maxLives: MAX_LIVES,
     wave: Math.min(s.waveIndex + 1, s.level.waves.length),
     waveCount: s.level.waves.length,
-    prepSeconds: s.status === "prep" ? Math.ceil(s.prepRemaining / TICKS_PER_SECOND) : 0,
     score: s.score,
     kills: s.kills,
     leaks: s.leaks,
@@ -267,6 +275,12 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
         for (const ev of after.events) {
           if (ev.kind === "bounty") {
             floatersRef.current.push({ amount: ev.amount, x: ev.x, y: ev.y, age: 0, life: 1.4 });
+          } else if (ev.kind === "wave_start") {
+            // With no break to mark it, the wave boundary needs its own
+            // signalling or it passes unnoticed: the counter pops (Hud), the
+            // spawn edge sweeps (Renderer), and this is the cue.
+            play("wave");
+            rendererRef.current?.playWaveStart();
           } else if (ev.kind === "summoned") {
             play("summon");
           } else if (ev.kind === "merged") {

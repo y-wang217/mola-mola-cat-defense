@@ -68,8 +68,6 @@ export type WaveScaling = {
 
 export type WaveDef = {
   spawns: SpawnDef[];
-  /** Ticks of breathing room before this wave auto-starts. */
-  prepTicks: number;
   /** Omitted means 100% across the board. */
   scaling?: WaveScaling;
 };
@@ -165,7 +163,14 @@ export type Projectile = {
   alive: boolean;
 };
 
-export type RunStatus = "prep" | "wave" | "won" | "lost";
+/**
+ * There is no "prep". The break phase between waves was deleted rather than
+ * shortened in the tempo patch — a zero-length phase that still exists is a
+ * source of off-by-one bugs in the wave counter and in replay. Wave N+1 begins
+ * spawning the tick wave N finishes spawning, so a run is only ever running,
+ * won or lost.
+ */
+export type RunStatus = "wave" | "won" | "lost";
 
 /** Surfaced to the UI for one tick. Never drives sim logic. */
 export type SimEvent =
@@ -173,6 +178,9 @@ export type SimEvent =
   | { kind: "bounty"; amount: number; x: number; y: number; enemy: EnemyKind }
   | { kind: "summoned"; towerId: TowerId; tileIndex: number }
   | { kind: "merged"; towerId: TowerId; tier: number }
+  /** A new wave started spawning. With no break to mark the boundary, this is
+   *  what the render layer hangs the wave-change cue on. */
+  | { kind: "wave_start"; wave: number }
   | { kind: "blocker_died"; tileIndex: number };
 
 export type GameState = {
@@ -195,10 +203,13 @@ export type GameState = {
   summonCost: number;
   summonsUsed: number;
   lives: number;
+  /**
+   * Which wave is currently SPAWNING. It reaches level.waves.length once
+   * everything has been sent, while enemies from earlier waves may still be
+   * walking — the run is not over until the board is clear.
+   */
   waveIndex: number;
   waveTick: number;
-  /** Ticks until the next wave auto-starts. Only meaningful in "prep". */
-  prepRemaining: number;
   spawnCursors: number[];
   enemies: Enemy[];
   towers: Tower[];

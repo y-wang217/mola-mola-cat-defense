@@ -36,10 +36,9 @@ export type EnemySpec = {
   blockDamage: number;
   /** Ticks between attacks on a blocker. */
   attackCooldown: number;
-  /** Lives lost if it reaches the end. */
-  leak: number;
   /** Fliers ignore blockers entirely — they still follow the lane. */
   flying: boolean;
+
   score: number;
   /** Render radius, fixed-point. */
   radius: number;
@@ -52,7 +51,7 @@ export const ENEMY_SPECS: Record<EnemyKind, EnemySpec> = {
   runner: {
     icon: "🏃", trash: false,
     hp: 95, speed: 148, armor: 0, blockDamage: 4, attackCooldown: 20,
-    leak: 1, flying: false, score: 10, radius: 165,
+    flying: false, score: 10, radius: 165,
   },
 
   // Armour 30 floors every fast tower and badly blunts the heavy ones. Shred it,
@@ -60,36 +59,36 @@ export const ENEMY_SPECS: Record<EnemyKind, EnemySpec> = {
   armoured: {
     icon: "🪖", trash: false,
     hp: 185, speed: 45, armor: 30, blockDamage: 8, attackCooldown: 24,
-    leak: 1, flying: false, score: 15, radius: 200,
+    flying: false, score: 15, radius: 200,
   },
 
   // Individually trivial; the threat is count. Chews through blocker HP.
   swarm: {
     icon: "🐜", trash: true,
     hp: 30, speed: 68, armor: 0, blockDamage: 3, attackCooldown: 18,
-    leak: 1, flying: false, score: 6, radius: 130,
+    flying: false, score: 6, radius: 130,
   },
 
   // Follows the lane but cannot be blocked or engaged. Melee is irrelevant.
   flier: {
     icon: "🦇", trash: false,
     hp: 105, speed: 84, armor: 4, blockDamage: 0, attackCooldown: 0,
-    leak: 1, flying: true, score: 14, radius: 175,
+    flying: true, score: 14, radius: 175,
   },
 
   // Slow enough to shoot, but blockDamage 26 deletes a lone tier-1 blocker.
   brute: {
     icon: "🦍", trash: false,
     hp: 460, speed: 30, armor: 16, blockDamage: 30, attackCooldown: 30,
-    leak: 2, flying: false, score: 40, radius: 265,
+    flying: false, score: 40, radius: 265,
   },
 
-  // Wave 6. Armour 14 blunts raw projectile damage and the pool is too large
+  // The final wave. Armour blunts raw projectile damage and the pool is too large
   // for status alone to whittle: it requires both families working together.
   boss: {
     icon: "👹", trash: false,
     hp: 3000, speed: 24, armor: 70, blockDamage: 50, attackCooldown: 26,
-    leak: 6, flying: false, score: 250, radius: 340,
+    flying: false, score: 250, radius: 340,
   },
 };
 

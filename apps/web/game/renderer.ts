@@ -73,6 +73,16 @@ const TOWER_PLATE_MELEE = TILE * 0.82;
 /** Enemies scale with their radius, but never below something readable. */
 const ENEMY_GLYPH_MIN = TILE * 0.42;
 
+/**
+ * The wave-boundary sweep, ms.
+ *
+ * With the break phase gone there is no pause to mark a new wave, so the
+ * boundary has to be drawn. A band of light runs down the lane from the spawn
+ * edge — the direction enemies come from — at the same moment the counter pops
+ * and the cue fires.
+ */
+const WAVE_SWEEP_MS = 900;
+
 /** The merge-moment animation, ms. See playMerge. */
 const MERGE_FX_MS = 700;
 /** How long the re-rolled type flashes at 2x. The re-roll IS the mechanic. */
@@ -106,6 +116,7 @@ export class Renderer {
   private partnerIds: number[] = [];
   private mergeableIds: number[] = [];
   private mergeFx: (MergeFx & { start: number })[] = [];
+  private waveSweepStart = -1;
   private built = false;
 
   async init(canvasHost: HTMLElement, state: GameState): Promise<void> {
@@ -146,6 +157,11 @@ export class Renderer {
    */
   playMerge(fx: MergeFx): void {
     this.mergeFx.push({ ...fx, start: performance.now() });
+  }
+
+  /** A new wave started spawning. See WAVE_SWEEP_MS. */
+  playWaveStart(): void {
+    this.waveSweepStart = performance.now();
   }
 
   resize(width: number, height: number, state: GameState): void {
@@ -209,6 +225,8 @@ export class Renderer {
     const prevEnemies = new Map(prev.enemies.map((e) => [e.id, e]));
     const prevProjectiles = new Map(prev.projectiles.map((p) => [p.id, p]));
 
+    this.drawWaveSweep(g, cur);
+
     // Range ring for the selected tower, under everything else.
     if (this.selectedTowerId !== null) {
       const t = cur.towers.find((x) => x.id === this.selectedTowerId);
@@ -224,16 +242,20 @@ export class Renderer {
     // Selecting a tower dims everything that is not a legal partner. The
     // question the player is answering at that moment is "what can this merge
     // with", so everything else is noise until they answer it.
+    //
+    // Dimming is applied per tower rather than as an overlay: glyphs live in
+    // their own container above this Graphics layer, so a dark rectangle drawn
+    // here would sit UNDER every emoji on the board and dim nothing that reads.
     const focusing = this.selectedTowerId !== null && this.partnerIds.length > 0;
+    const dimTile = (tile: { pos: { x: number; y: number } }) => {
+      const c = tileCentre(tile.pos);
+      g.roundRect(c.x - TILE * 0.46, c.y - TILE * 0.46, TILE * 0.92, TILE * 0.92, TILE * 0.14);
+    };
     if (focusing) {
+      const occupied = new Set(cur.towers.map((t) => t.tileIndex));
       for (let i = 0; i < cur.level.terrain.tiles.length; i++) {
-        const tile = cur.level.terrain.tiles[i];
-        const holder = cur.towers.find((t) => t.tileIndex === i);
-        if (holder && (holder.id === this.selectedTowerId || this.partnerIds.includes(holder.id))) {
-          continue;
-        }
-        const c = tileCentre(tile.pos);
-        g.roundRect(c.x - TILE * 0.46, c.y - TILE * 0.46, TILE * 0.92, TILE * 0.92, TILE * 0.14);
+        if (occupied.has(i)) continue;
+        dimTile(cur.level.terrain.tiles[i]);
       }
       g.fill({ color: 0x05070c, alpha: 0.62 });
     }
@@ -248,16 +270,17 @@ export class Renderer {
       const partner = this.partnerIds.includes(t.id);
       const mergeable = this.mergeableIds.includes(t.id);
       const size = spec.family === "melee" ? TOWER_PLATE_MELEE : TOWER_PLATE;
+      const dim = focusing && !selected && !partner ? 0.3 : 1;
 
       // Family is the plate colour; the glyph on top carries the role.
       g.roundRect(t.x - size / 2, t.y - size / 2, size, size, TILE * 0.1);
-      g.fill({ color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.22 });
-      g.stroke({ width: 34, color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.9 });
+      g.fill({ color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.22 * dim });
+      g.stroke({ width: 34, color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.9 * dim });
 
       // Pre-merge affordance: a standing pulse on anything that HAS a partner,
       // before the player touches anything. Without it a merge is only
       // discoverable by tapping towers at random to see what lights up.
-      if (mergeable && !partner && !selected) {
+      if (mergeable && !partner && !selected && !focusing) {
         g.roundRect(t.x - size * 0.62, t.y - size * 0.62, size * 1.24, size * 1.24, TILE * 0.13);
         g.stroke({ width: 34, color: COLORS.merge, alpha: 0.35 + 0.45 * pulse });
       }
@@ -337,10 +360,11 @@ export class Renderer {
     this.iconUsed = 0;
     for (const t of cur.towers) {
       const size = towerSpec(t.towerId).family === "melee" ? TOWER_PLATE_MELEE : TOWER_PLATE;
-      this.glyph(towerSpec(t.towerId).icon, t.x, t.y, TOWER_GLYPH);
+      const lit = !focusing || t.id === this.selectedTowerId || this.partnerIds.includes(t.id);
+      this.glyph(towerSpec(t.towerId).icon, t.x, t.y, TOWER_GLYPH, lit ? 1 : 0.3);
       // The merge badge: a glyph, not a word. Sits on the plate's shoulder so
       // it never covers the tower's own identity.
-      if (this.mergeableIds.includes(t.id)) {
+      if (this.mergeableIds.includes(t.id) && lit) {
         this.glyph("🔁", t.x + size * 0.46, t.y - size * 0.46, TILE * 0.3, 0.6 + 0.4 * pulse);
       }
     }
@@ -367,6 +391,41 @@ export class Renderer {
     }
 
     this.app.renderer.render(this.app.stage);
+  }
+
+  /**
+   * A band of light travelling down the lane from the spawn edge, marking a
+   * wave boundary that no longer has a pause to mark it.
+   */
+  private drawWaveSweep(g: Graphics, cur: GameState): void {
+    if (this.waveSweepStart < 0) return;
+    const t = (performance.now() - this.waveSweepStart) / WAVE_SWEEP_MS;
+    if (t >= 1) {
+      this.waveSweepStart = -1;
+      return;
+    }
+
+    const { terrain } = cur.level;
+    const pts = terrain.path.map(tileCentre);
+    const head = t * (terrain.height + 2) * TILE - TILE;
+    const fade = 1 - t;
+
+    // Tint the spawn edge itself, so the direction reads even if the player is
+    // looking at the far end of the lane.
+    g.rect(0, -TILE, terrain.width * TILE, TILE * 1.2 * fade);
+    g.fill({ color: COLORS.merge, alpha: 0.25 * fade });
+
+    // A short bright section of lane centred on the sweep head.
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const lo = Math.min(a.y, b.y);
+      const hi = Math.max(a.y, b.y);
+      if (head + TILE < lo || head - TILE > hi) continue;
+      g.moveTo(a.x, Math.max(lo, Math.min(hi, head - TILE)));
+      g.lineTo(b.x, Math.max(lo, Math.min(hi, head + TILE)));
+    }
+    g.stroke({ width: TILE * 0.85, color: 0xffffff, alpha: 0.22 * fade, cap: "round" });
   }
 
   /**
@@ -407,21 +466,35 @@ export class Renderer {
       const t = (now - fx.start) / MERGE_FX_MS;
       if (t >= 1) continue;
 
-      // 1. Convergence, over the first 40% of the animation.
+      // 1. Convergence, over the first 40% of the animation. A bright trail
+      //    behind it, because the eye has to be able to find where the merge
+      //    came FROM without already looking there.
       if (t < 0.4) {
         const k = t / 0.4;
         const x = lerp(fx.fromX, fx.toX, k * k);
         const y = lerp(fx.fromY, fx.toY, k * k);
-        const size = TILE * 0.5 * (1 - k * 0.5);
-        g.roundRect(x - size / 2, y - size / 2, size, size, TILE * 0.1);
-        g.fill({ color: COLORS.merge, alpha: 0.55 });
+        const size = TILE * 0.66 * (1 - k * 0.4);
+
+        g.moveTo(fx.fromX, fx.fromY);
+        g.lineTo(x, y);
+        g.stroke({ width: TILE * 0.18 * (1 - k), color: COLORS.merge, alpha: 0.7 * (1 - k) });
+
+        g.roundRect(x - size / 2, y - size / 2, size, size, TILE * 0.12);
+        g.fill({ color: 0xffffff, alpha: 0.85 });
       }
 
-      // 2. Burst, once they land.
+      // 2. Burst, once they land: a white core flash and a green ring thrown
+      //    wide enough to be seen from the other side of the board.
       if (t >= 0.32) {
-        const k = Math.min(1, (t - 0.32) / 0.5);
-        g.circle(fx.toX, fx.toY, TILE * (0.28 + k * 0.9));
-        g.stroke({ width: 70 * (1 - k), color: COLORS.merge, alpha: 0.9 * (1 - k) });
+        const k = Math.min(1, (t - 0.32) / 0.55);
+        g.circle(fx.toX, fx.toY, TILE * (0.5 + k * 0.35));
+        g.fill({ color: 0xffffff, alpha: 0.75 * (1 - k) });
+
+        g.circle(fx.toX, fx.toY, TILE * (0.35 + k * 1.5));
+        g.stroke({ width: 150 * (1 - k), color: COLORS.merge, alpha: 1 - k });
+
+        g.circle(fx.toX, fx.toY, TILE * (0.2 + k * 1.05));
+        g.stroke({ width: 90 * (1 - k), color: 0xffffff, alpha: 0.8 * (1 - k) });
       }
 
       // 3. The re-rolled type at 2x, settling. Drawn over the real tower.
@@ -436,10 +509,10 @@ export class Renderer {
       const bump = tierK < 0.5 ? 0.6 + tierK * 2.4 : 1.8 - (tierK - 0.5) * 1.2;
       this.glyph(
         `${fx.tier}`,
-        fx.toX + TILE * 0.42,
-        fx.toY + TILE * 0.42,
-        TILE * 0.3 * bump,
-        1 - Math.max(0, (t - 0.7) / 0.3),
+        fx.toX + TILE * 0.5,
+        fx.toY + TILE * 0.5,
+        TILE * 0.45 * bump,
+        1 - Math.max(0, (t - 0.75) / 0.25),
       );
     }
 

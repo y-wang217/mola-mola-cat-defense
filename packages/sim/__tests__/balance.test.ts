@@ -17,18 +17,24 @@
 
 import { describe, expect, it } from "vitest";
 import { M0_LEVEL } from "../src/level.js";
+import { GAME_SPEED_MULTIPLIER, TICKS_PER_SECOND } from "../src/economy.js";
 import {
-  AB_NO_MELEE, AB_WITH_MELEE, BALANCED, NO_PROJECTILE, NO_STATUS, STATUS_HEAVY, autoplay,
+  AB_NO_MELEE, AB_WITH_MELEE, BALANCED, GREEDY_MERGE, MIXED,
+  NO_PROJECTILE, NO_STATUS, STATUS_HEAVY, autoplay,
 } from "./autoplay.js";
 
-/** Wave index (0-based) whose archetype punishes each neglected family. */
+/**
+ * Wave index (0-based) that sends fliers. A roster that cannot touch them
+ * survives the wave itself — the fliers spawn, walk, and leak — so the run ends
+ * during the wave AFTER, which is what the bound below allows for.
+ */
 const FLIER_WAVE = 3;
 
 describe("neglecting a family is punished", () => {
   it("a roster with no projectile tower cannot touch fliers and dies to them", () => {
     const { final } = autoplay(M0_LEVEL, NO_PROJECTILE);
     expect(final.status).toBe("lost");
-    expect(final.waveIndex).toBeLessThanOrEqual(FLIER_WAVE);
+    expect(final.waveIndex).toBeLessThanOrEqual(FLIER_WAVE + 1);
   });
 
   it("a status-heavy board loses — force multipliers with nothing to multiply", () => {
@@ -53,6 +59,10 @@ describe("neglecting a family is punished", () => {
   it("no-status is currently NOT walled by the boss — property is broken", () => {
     const { final } = autoplay(M0_LEVEL, NO_STATUS);
     expect(final.status).toBe("won");
+    // Narrower than it was: the tempo patch's ten-wave curve takes this from a
+    // comfortable clear to the tightest win in the suite. Still a win, so the
+    // gap is real; the boss-armour fix it needs is still a design call.
+    expect(final.lives).toBeLessThanOrEqual(2);
   });
 });
 
@@ -65,9 +75,35 @@ describe("a roster spanning all three families wins", () => {
 
   it("lasts long enough to be a run and short enough to retry", () => {
     const { ticks } = autoplay(M0_LEVEL, BALANCED);
-    const seconds = ticks / 30;
-    expect(seconds).toBeGreaterThan(150);
-    expect(seconds).toBeLessThan(400);
+    // Wall clock, not sim seconds: the driver advances the sim
+    // GAME_SPEED_MULTIPLIER ticks per 1/30s, so a 216-second run of sim time is
+    // under two minutes in the player's hands. That is the number the tempo
+    // feedback was about.
+    const wallSeconds = ticks / TICKS_PER_SECOND / GAME_SPEED_MULTIPLIER;
+    expect(wallSeconds).toBeGreaterThan(60);
+    expect(wallSeconds).toBeLessThan(210);
+  });
+});
+
+describe("bad play loses, and loses late", () => {
+  /**
+   * The difficulty target from the tempo patch: near-impossible to lose before
+   * wave 4, possible to lose by wave 8-10 with genuinely bad play.
+   *
+   * "Genuinely bad play" is modelled as merging the instant a pair exists.
+   * Tier 2 is 145% of tier 1, so merging while a free tile remains trades 200%
+   * of a family's output for 145% and shrinks the board — it feels productive
+   * and is not. Across ten rosters it loses four runs; patient merging loses
+   * none.
+   */
+  it("punishes greedy merging, and not in the safety band", () => {
+    const { final } = autoplay(M0_LEVEL, MIXED, GREEDY_MERGE);
+    expect(final.status).toBe("lost");
+    expect(final.waveIndex + 1).toBeGreaterThanOrEqual(8);
+  });
+
+  it("the same roster clears when merges are held until the board is full", () => {
+    expect(autoplay(M0_LEVEL, MIXED).final.status).toBe("won");
   });
 });
 
@@ -79,13 +115,17 @@ describe("melee is viable, and measurably not mandatory", () => {
     expect(final.status).toBe("won");
   });
 
-  it("documents that dropping the blocker also clears it — melee is break-even", () => {
+  it("documents that dropping the blocker also clears it — melee is not mandatory", () => {
     const withMelee = autoplay(M0_LEVEL, AB_WITH_MELEE);
     const without = autoplay(M0_LEVEL, AB_NO_MELEE);
     expect(withMelee.final.status).toBe("won");
     // This assertion records the gap. If a future enemy change makes melee
     // mandatory, this flips to `toBe("lost")` and the note above comes out.
     expect(without.final.status).toBe("won");
+    // It is no longer break-EVEN, though: on the ten-wave curve the blocker is
+    // worth two segments of the life bar at the end of the run. Melee went from
+    // "measurably pointless" to "measurably worth a slot, still not required".
+    expect(withMelee.final.lives).toBeGreaterThan(without.final.lives);
   });
 });
 

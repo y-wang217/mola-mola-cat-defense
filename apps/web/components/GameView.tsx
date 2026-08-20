@@ -71,7 +71,7 @@ export default function GameView() {
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-2">
       <Hud hud={hud} />
-      <WavePanel waveIndex={hud.wave - 1} status={hud.status} prepSeconds={hud.prepSeconds} />
+      <WavePanel waveIndex={hud.wave - 1} />
 
       <div className="relative min-h-0 flex-1">
         <div ref={host} className="absolute inset-0 overflow-hidden rounded-xl" />

@@ -11,12 +11,28 @@
 
 import { createInitialState, tick } from "../src/tick.js";
 import { mergePartners } from "../src/merge.js";
+import { legalTileIndices } from "../src/summon.js";
 import { towerSpec } from "../src/towers.js";
 import type { GameState, Input, LevelDef, TowerId } from "../src/types.js";
 
 export type Policy = {
   /** Merge whenever a legal pair exists. Off = hoard, which tests the other side. */
   merge: boolean;
+  /**
+   * Merge only once the tile class has no free tile left.
+   *
+   * This is the difference between competent and careless play, and it is a
+   * bigger difference than it looks. Tier 2 is 145% of tier 1, so merging two
+   * tier-1 towers while a free tile exists trades 200% of a family's output for
+   * 145% — a loss. Merging is for when the board is out of room, or when the
+   * re-roll is worth gambling on.
+   *
+   * Measured on the M0.1 level: patient merging clears with every roster tried;
+   * greedy merging loses four of ten, at waves 5, 8 and 11. Both are useful —
+   * the first is the "reasonable play" baseline the difficulty is authored
+   * against, the second is the "genuinely bad play" baseline.
+   */
+  mergeOnlyWhenFull: boolean;
   /** Sell the weakest tower when the board is full and mana is piling up. */
   sellWhenFull: boolean;
   /**
@@ -31,8 +47,12 @@ export type Policy = {
 };
 
 export const DEFAULT_POLICY: Policy = {
-  merge: true, sellWhenFull: true, summonFromTick: 0, maxSummons: Number.MAX_SAFE_INTEGER,
+  merge: true, mergeOnlyWhenFull: true, sellWhenFull: true,
+  summonFromTick: 0, maxSummons: Number.MAX_SAFE_INTEGER,
 };
+
+/** Careless play: merge the instant a pair exists, which shrinks the board. */
+export const GREEDY_MERGE: Policy = { ...DEFAULT_POLICY, mergeOnlyWhenFull: false };
 
 export type PlayResult = {
   final: GameState;
@@ -67,15 +87,20 @@ export function autoplay(
     if (policy.merge) {
       for (const t of s.towers) {
         const partners = mergePartners(s, t.id);
-        if (partners.length > 0) {
-          inputs.push({
-            tick: s.tick,
-            kind: "merge",
-            payload: { sourceId: partners[0], targetId: t.id },
-          });
-          merges++;
-          break;
+        if (partners.length === 0) continue;
+        if (
+          policy.mergeOnlyWhenFull &&
+          legalTileIndices(s, towerSpec(t.towerId).tileClass).length > 0
+        ) {
+          continue;
         }
+        inputs.push({
+          tick: s.tick,
+          kind: "merge",
+          payload: { sourceId: partners[0], targetId: t.id },
+        });
+        merges++;
+        break;
       }
     }
 
@@ -160,16 +185,23 @@ export const STATUS_HEAVY: TowerId[] = ["frost", "venom", "hex", "rasp", "bulwar
  * no decisions from state beyond legality, so the input log is stable and the
  * only thing that can change its hash is the sim itself.
  *
- * The roster is status-heavy on purpose. Status towers occupy platform tiles
- * and never die, so the 14 platforms fill and stay filled — after which further
- * platform draws fail with `no_room`, which is one of the cases §8 requires the
- * fixture to cover. A melee-heavy roster cannot do this reliably: blockers die
- * during waves and keep freeing their lane tiles.
+ * Every entry is PLATFORM class on purpose, so every draw competes for the same
+ * 14 tiles: they fill, they stay filled because nothing on a platform can die,
+ * and the next summon fails with `no_room` — one of the cases §8 requires the
+ * fixture to cover. A roster with a blocker in it cannot do this reliably,
+ * because blockers die during waves and keep freeing their lane tiles.
+ *
+ * It was status-heavy before the tempo patch, where the same trick worked
+ * because runs were long enough to reach 14 summons. On the ten-wave curve a
+ * board with no damage in it dies around wave 7, well before the platforms are
+ * full, so two projectile towers are in the roster to keep the run alive long
+ * enough to exercise the case. The summon cadence and the scripted merge and
+ * sell ticks moved inside the shorter window for the same reason.
  *
  * Counts come from emitted events, not from intent, so a summon that the sim
  * rejected is never counted as one that happened.
  */
-export const GOLDEN_ROSTER: TowerId[] = ["frost", "venom", "hex", "rasp", "bulwark"];
+export const GOLDEN_ROSTER: TowerId[] = ["arrow", "mortar", "frost", "venom", "hex"];
 export const GOLDEN_TICKS = 7200;
 
 export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: number) {
@@ -186,10 +218,10 @@ export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: numb
     if (s.status === "won" || s.status === "lost") break;
     const inputs: Input[] = [];
 
-    if (s.tick % 40 === 0 && s.mana >= s.summonCost) {
+    if (s.tick % 25 === 0 && s.mana >= s.summonCost) {
       inputs.push({ tick: s.tick, kind: "summon", payload: {} });
     }
-    if ((s.tick === 2000 || s.tick === 3400) && s.towers.length > 1) {
+    if ((s.tick === 1200 || s.tick === 2200) && s.towers.length > 1) {
       for (const t of s.towers) {
         const partners = mergePartners(s, t.id);
         if (partners.length > 0) {
@@ -198,7 +230,7 @@ export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: numb
         }
       }
     }
-    if (!sold && s.tick === 2600 && s.towers.length > 0) {
+    if (!sold && s.tick === 1600 && s.towers.length > 0) {
       inputs.push({ tick: s.tick, kind: "sell", payload: { towerId: s.towers[0].id } });
       sells++;
       sold = true;
