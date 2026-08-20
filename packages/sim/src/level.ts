@@ -1,10 +1,17 @@
 /**
  * The single hardcoded M0 board.
  *
- * Deliberately tight: 5 lane tiles and 14 platforms. A sprawling board makes
- * random placement feel weightless — when almost every tile is free, where the
- * summon lands stops mattering. Small boards make each summon a real event and
- * make selling a real decision.
+ * 9 wide by 12 tall, portrait, square cells. The playtest called the old
+ * 9x16 board unreadable on a phone: the cells were the same shape, but there
+ * were 144 of them and the board was letterboxed by its height, so a tile came
+ * out around 37 CSS px and the tower glyph inside it around 26. At 12 rows the
+ * board is width-bound instead, the tile lands near 42px and the glyph clears
+ * the 28px floor.
+ *
+ * Deliberately tight: 5 lane tiles and 14 platforms, unchanged in count from
+ * the 9x16 board. A sprawling board makes random placement feel weightless —
+ * when almost every tile is free, where the summon lands stops mattering. Small
+ * boards make each summon a real event and make selling a real decision.
  *
  * The five lane tiles are spread along the run so blockers stagger rather than
  * stacking into one chokepoint.
@@ -14,27 +21,34 @@ import { buildPath, pathDistanceAt, tileCentre } from "./pathing.js";
 import type { GridPos, LevelDef, Terrain, Tile } from "./types.js";
 
 const WIDTH = 9;
-const HEIGHT = 16;
+const HEIGHT = 12;
 
-// Enters off the top, exits off the bottom. Axis-aligned so lengths are exact.
+/**
+ * Enters off the top, exits off the bottom. Axis-aligned so lengths are exact.
+ *
+ * Re-authored for the smaller grid and kept in character: still a serpentine,
+ * still six turns, still entering at column 1 and leaving at column 7. It is 31
+ * tiles long against the old 35 — the shortest the character survives at this
+ * height — so enemies reach the end about 11% sooner at the same speed.
+ */
 const PATH: GridPos[] = [
   { x: 1, y: -1 },
-  { x: 1, y: 3 },
-  { x: 7, y: 3 },
-  { x: 7, y: 7 },
-  { x: 1, y: 7 },
-  { x: 1, y: 11 },
-  { x: 7, y: 11 },
-  { x: 7, y: 16 },
+  { x: 1, y: 2 },
+  { x: 7, y: 2 },
+  { x: 7, y: 5 },
+  { x: 1, y: 5 },
+  { x: 1, y: 8 },
+  { x: 7, y: 8 },
+  { x: 7, y: 12 },
 ];
 
 /** Melee-eligible lane tiles, spread along the run. */
 const MELEE_TILES: GridPos[] = [
-  { x: 1, y: 2 },
-  { x: 4, y: 3 },
-  { x: 7, y: 5 },
-  { x: 4, y: 7 },
-  { x: 4, y: 11 },
+  { x: 1, y: 1 },
+  { x: 4, y: 2 },
+  { x: 7, y: 4 },
+  { x: 4, y: 5 },
+  { x: 4, y: 8 },
 ];
 
 /**
@@ -47,11 +61,11 @@ const MELEE_TILES: GridPos[] = [
  * platforms within roughly two tiles of it.
  */
 const PLATFORM_TILES: GridPos[] = [
-  { x: 2, y: 1 }, { x: 3, y: 1 }, { x: 4, y: 2 },   // cover (1,2) and (4,3)
-  { x: 4, y: 4 }, { x: 6, y: 4 }, { x: 6, y: 6 },   // cover (4,3) and (7,5)
-  { x: 4, y: 6 }, { x: 4, y: 8 }, { x: 3, y: 9 },   // cover (4,7)
-  { x: 5, y: 9 }, { x: 4, y: 10 }, { x: 4, y: 12 }, // cover (4,11)
-  { x: 0, y: 5 }, { x: 0, y: 9 },                   // flanks
+  { x: 2, y: 1 }, { x: 3, y: 1 }, { x: 5, y: 1 },   // cover (1,1) and (4,2)
+  { x: 4, y: 3 }, { x: 6, y: 3 }, { x: 6, y: 4 },   // cover (4,2) and (7,4)
+  { x: 3, y: 4 }, { x: 4, y: 4 }, { x: 5, y: 6 },   // cover (4,5)
+  { x: 3, y: 7 }, { x: 4, y: 7 }, { x: 5, y: 7 },   // cover (4,8)
+  { x: 6, y: 9 }, { x: 6, y: 10 },                  // cover the final descent
 ];
 
 function buildTerrain(): Terrain {
