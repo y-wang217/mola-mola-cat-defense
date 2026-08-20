@@ -57,6 +57,37 @@ const STATUS_COLOR: Record<StatusKind, number> = {
 
 const STATUS_ORDER: StatusKind[] = ["slow", "poison", "vulnerable", "armor_shred", "mark", "stun"];
 
+/**
+ * Glyph sizing, in world units where TILE = 1000.
+ *
+ * These are the readability floor from the playtest, not a style: the tower
+ * emoji must land at 28 CSS px or more at the reference phone width, and the
+ * only lever the renderer has is the fraction of a tile the glyph occupies.
+ * A tile is drawn at `min(boardWidthPx / cols, boardHeightPx / rows)`, so the
+ * fraction below times that number is the delivered pixel size.
+ */
+const TOWER_GLYPH = TILE * 0.7;
+/** Plates sized around the glyph rather than the other way round. */
+const TOWER_PLATE = TILE * 0.76;
+const TOWER_PLATE_MELEE = TILE * 0.82;
+/** Enemies scale with their radius, but never below something readable. */
+const ENEMY_GLYPH_MIN = TILE * 0.42;
+
+/** The merge-moment animation, ms. See playMerge. */
+const MERGE_FX_MS = 700;
+/** How long the re-rolled type flashes at 2x. The re-roll IS the mechanic. */
+const MERGE_FLASH_MS = 400;
+
+export type MergeFx = {
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  /** The type the merge rolled into — the thing the player must see change. */
+  icon: string;
+  tier: number;
+};
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
@@ -73,6 +104,8 @@ export class Renderer {
   private floaterPool: Text[] = [];
   private selectedTowerId: number | null = null;
   private partnerIds: number[] = [];
+  private mergeableIds: number[] = [];
+  private mergeFx: (MergeFx & { start: number })[] = [];
   private built = false;
 
   async init(canvasHost: HTMLElement, state: GameState): Promise<void> {
@@ -98,6 +131,21 @@ export class Renderer {
 
   setPartners(ids: number[]): void {
     this.partnerIds = ids;
+  }
+
+  /** Towers that have a legal partner right now. Drives the standing badge. */
+  setMergeable(ids: number[]): void {
+    this.mergeableIds = ids;
+  }
+
+  /**
+   * Fire the merge-moment animation. Three things happen at once and all three
+   * are needed: the sources converge (what merged), a burst (that it happened),
+   * and the new type's glyph at 2x (what it became). Merge re-rolls the tower
+   * type — if the player does not see the re-roll, the mechanic is invisible.
+   */
+  playMerge(fx: MergeFx): void {
+    this.mergeFx.push({ ...fx, start: performance.now() });
   }
 
   resize(width: number, height: number, state: GameState): void {
@@ -173,20 +221,50 @@ export class Renderer {
       }
     }
 
+    // Selecting a tower dims everything that is not a legal partner. The
+    // question the player is answering at that moment is "what can this merge
+    // with", so everything else is noise until they answer it.
+    const focusing = this.selectedTowerId !== null && this.partnerIds.length > 0;
+    if (focusing) {
+      for (let i = 0; i < cur.level.terrain.tiles.length; i++) {
+        const tile = cur.level.terrain.tiles[i];
+        const holder = cur.towers.find((t) => t.tileIndex === i);
+        if (holder && (holder.id === this.selectedTowerId || this.partnerIds.includes(holder.id))) {
+          continue;
+        }
+        const c = tileCentre(tile.pos);
+        g.roundRect(c.x - TILE * 0.46, c.y - TILE * 0.46, TILE * 0.92, TILE * 0.92, TILE * 0.14);
+      }
+      g.fill({ color: 0x05070c, alpha: 0.62 });
+    }
+
+    // A slow breathing value, shared by every standing pulse on the board so
+    // they beat together rather than shimmering independently.
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 320);
+
     for (const t of cur.towers) {
       const spec = towerSpec(t.towerId);
       const selected = t.id === this.selectedTowerId;
       const partner = this.partnerIds.includes(t.id);
-      const size = spec.family === "melee" ? TILE * 0.58 : TILE * 0.5;
+      const mergeable = this.mergeableIds.includes(t.id);
+      const size = spec.family === "melee" ? TOWER_PLATE_MELEE : TOWER_PLATE;
 
       // Family is the plate colour; the glyph on top carries the role.
       g.roundRect(t.x - size / 2, t.y - size / 2, size, size, TILE * 0.1);
       g.fill({ color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.22 });
       g.stroke({ width: 34, color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.9 });
 
+      // Pre-merge affordance: a standing pulse on anything that HAS a partner,
+      // before the player touches anything. Without it a merge is only
+      // discoverable by tapping towers at random to see what lights up.
+      if (mergeable && !partner && !selected) {
+        g.roundRect(t.x - size * 0.62, t.y - size * 0.62, size * 1.24, size * 1.24, TILE * 0.13);
+        g.stroke({ width: 34, color: COLORS.merge, alpha: 0.35 + 0.45 * pulse });
+      }
+
       if (partner || selected) {
-        g.roundRect(t.x - size * 0.72, t.y - size * 0.72, size * 1.44, size * 1.44, TILE * 0.14);
-        g.stroke({ width: 46, color: partner ? COLORS.merge : 0xffffff, alpha: 0.95 });
+        g.roundRect(t.x - size * 0.66, t.y - size * 0.66, size * 1.32, size * 1.32, TILE * 0.14);
+        g.stroke({ width: 52, color: partner ? COLORS.merge : 0xffffff, alpha: 0.95 });
       }
 
       // Tier needs its own indicator: emoji cannot be tinted, so tier cannot
@@ -258,7 +336,13 @@ export class Renderer {
     // Glyphs last so they sit above the geometry.
     this.iconUsed = 0;
     for (const t of cur.towers) {
-      this.glyph(towerSpec(t.towerId).icon, t.x, t.y, TILE * 0.34);
+      const size = towerSpec(t.towerId).family === "melee" ? TOWER_PLATE_MELEE : TOWER_PLATE;
+      this.glyph(towerSpec(t.towerId).icon, t.x, t.y, TOWER_GLYPH);
+      // The merge badge: a glyph, not a word. Sits on the plate's shoulder so
+      // it never covers the tower's own identity.
+      if (this.mergeableIds.includes(t.id)) {
+        this.glyph("🔁", t.x + size * 0.46, t.y - size * 0.46, TILE * 0.3, 0.6 + 0.4 * pulse);
+      }
     }
     for (const e of cur.enemies) {
       const p = prevEnemies.get(e.id);
@@ -268,9 +352,10 @@ export class Renderer {
         spec.icon,
         (p ? lerp(p.x, e.x, alpha) : e.x) + off.x,
         (p ? lerp(p.y, e.y, alpha) : e.y) + off.y,
-        spec.radius * 1.5,
+        Math.max(spec.radius * 2.1, ENEMY_GLYPH_MIN),
       );
     }
+    this.drawMergeFx(g);
     for (let i = this.iconUsed; i < this.iconPool.length; i++) this.iconPool[i].visible = false;
 
     for (const proj of cur.projectiles) {
@@ -289,7 +374,7 @@ export class Renderer {
    * family, tier, status — is drawn as geometry around the glyph rather than
    * applied to it.
    */
-  private glyph(text: string, x: number, y: number, size: number): void {
+  private glyph(text: string, x: number, y: number, size: number, alpha = 1): void {
     let t = this.iconPool[this.iconUsed];
     if (!t) {
       t = new Text({ text: "", style: new TextStyle({ fontSize: 400 }) });
@@ -302,7 +387,63 @@ export class Renderer {
     t.style.fontSize = size;
     t.x = x;
     t.y = y;
+    t.alpha = alpha;
     this.iconUsed++;
+  }
+
+  /**
+   * The merge moment. Sources converge into the destination, a ring bursts out
+   * of it, the new tier number pops, and the RE-ROLLED type flashes at 2x for
+   * MERGE_FLASH_MS before settling to normal size.
+   *
+   * The flash is the load-bearing part: merging re-rolls the tower type, and a
+   * mechanic the player never sees fire is a mechanic they do not have.
+   */
+  private drawMergeFx(g: Graphics): void {
+    if (this.mergeFx.length === 0) return;
+    const now = performance.now();
+
+    for (const fx of this.mergeFx) {
+      const t = (now - fx.start) / MERGE_FX_MS;
+      if (t >= 1) continue;
+
+      // 1. Convergence, over the first 40% of the animation.
+      if (t < 0.4) {
+        const k = t / 0.4;
+        const x = lerp(fx.fromX, fx.toX, k * k);
+        const y = lerp(fx.fromY, fx.toY, k * k);
+        const size = TILE * 0.5 * (1 - k * 0.5);
+        g.roundRect(x - size / 2, y - size / 2, size, size, TILE * 0.1);
+        g.fill({ color: COLORS.merge, alpha: 0.55 });
+      }
+
+      // 2. Burst, once they land.
+      if (t >= 0.32) {
+        const k = Math.min(1, (t - 0.32) / 0.5);
+        g.circle(fx.toX, fx.toY, TILE * (0.28 + k * 0.9));
+        g.stroke({ width: 70 * (1 - k), color: COLORS.merge, alpha: 0.9 * (1 - k) });
+      }
+
+      // 3. The re-rolled type at 2x, settling. Drawn over the real tower.
+      const flash = (now - fx.start) / MERGE_FLASH_MS;
+      if (flash < 1) {
+        const scale = 2 - flash;
+        this.glyph(fx.icon, fx.toX, fx.toY, TOWER_GLYPH * scale);
+      }
+
+      // 4. The new tier, popping.
+      const tierK = Math.min(1, t / 0.55);
+      const bump = tierK < 0.5 ? 0.6 + tierK * 2.4 : 1.8 - (tierK - 0.5) * 1.2;
+      this.glyph(
+        `${fx.tier}`,
+        fx.toX + TILE * 0.42,
+        fx.toY + TILE * 0.42,
+        TILE * 0.3 * bump,
+        1 - Math.max(0, (t - 0.7) / 0.3),
+      );
+    }
+
+    this.mergeFx = this.mergeFx.filter((fx) => now - fx.start < MERGE_FX_MS);
   }
 
   /**

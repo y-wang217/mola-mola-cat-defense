@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { TOWER_POOL, towerSpec } from "@siege/sim";
+import { TOWER_POOL } from "@siege/sim";
 import type { TowerId } from "@siege/sim";
 import { useGame } from "@/game/useGame";
 import Hud from "./Hud";
@@ -14,6 +14,15 @@ const FAMILY_DOT: Record<string, string> = {
   melee: "border-amber-400",
   status: "border-violet-400",
 };
+
+/**
+ * Every interactive target is at least this many CSS px on both axes.
+ *
+ * The board's tiles are smaller than this on a phone, so tower targets are
+ * deliberately allowed to exceed their tile and overlap slightly. A tap landing
+ * on a neighbour is a smaller problem than a tap landing on nothing.
+ */
+const MIN_TARGET_PX = 44;
 
 /**
  * Track an element's pixel size so the tower overlay can match the canvas.
@@ -54,6 +63,7 @@ export default function GameView() {
   const pxPerTile = Math.min(width / level.terrain.width, height / level.terrain.height);
   const offsetX = (width - pxPerTile * level.terrain.width) / 2;
   const offsetY = (height - pxPerTile * level.terrain.height) / 2;
+  const targetPx = Math.max(MIN_TARGET_PX, pxPerTile * 0.92);
 
   const selected = hud.towers.find((t) => t.id === game.selectedTowerId);
   const over = hud.status === "won" || hud.status === "lost";
@@ -81,8 +91,8 @@ export default function GameView() {
                 style={{
                   left: offsetX + (tile.pos.x + 0.5) * pxPerTile,
                   top: offsetY + (tile.pos.y + 0.5) * pxPerTile,
-                  width: pxPerTile * 0.9,
-                  height: pxPerTile * 0.9,
+                  width: targetPx,
+                  height: targetPx,
                 }}
               />
             );
@@ -90,26 +100,29 @@ export default function GameView() {
         </div>
 
         {game.message && (
-          <div className="pointer-events-none absolute inset-x-2 top-2 rounded-lg bg-slate-800/95 px-3 py-2 text-center text-sm text-amber-200">
+          <div className="pointer-events-none absolute inset-x-2 top-2 rounded-lg bg-slate-950/95 px-3 py-2 text-center text-2xl ring-1 ring-amber-400/60">
             {game.message}
           </div>
         )}
 
         {over && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-xl bg-slate-950/85 backdrop-blur-sm">
-            <p className="text-3xl font-semibold">
-              {hud.status === "won" ? "Held the line" : "Overrun"}
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-xl bg-slate-950/90 backdrop-blur-sm">
+            <p className="text-6xl" aria-label={hud.status === "won" ? "run won" : "run lost"}>
+              {hud.status === "won" ? "🏆" : "💀"}
             </p>
-            <p className="text-sm text-slate-400">
-              Wave {hud.wave}/{hud.waveCount} · {hud.kills} killed · {hud.leaks} leaked ·{" "}
-              {hud.summonsUsed} summons
+            <p className="num flex flex-wrap justify-center gap-x-4 text-base text-slate-200">
+              <span>🌊{hud.wave}</span>
+              <span>💀{hud.kills}</span>
+              <span>💔{hud.leaks}</span>
+              <span>✨{hud.summonsUsed}</span>
             </p>
-            <p className="text-2xl tabular-nums">{hud.score.toLocaleString()}</p>
+            <p className="num text-3xl font-bold">{hud.score.toLocaleString()}</p>
             <button
               onClick={game.backToRoster}
-              className="rounded-lg bg-sky-500 px-6 py-3 text-base font-semibold text-slate-950 active:bg-sky-400"
+              aria-label="play again"
+              className="min-h-[56px] min-w-[96px] rounded-lg bg-sky-500 px-6 text-3xl text-slate-950 active:bg-sky-400"
             >
-              Again
+              🔄
             </button>
           </div>
         )}
@@ -117,7 +130,8 @@ export default function GameView() {
 
       <div className="flex shrink-0 flex-col gap-2">
         {/* The roster stays on screen: the player has to be able to reason
-            about what the next summon might be. */}
+            about what the next summon might be. Emoji only — the names were
+            unreadable at this size and carried nothing the glyph does not. */}
         <div className="flex gap-1">
           {game.roster.map((id: TowerId) => {
             const spec = TOWER_POOL.find((t) => t.id === id);
@@ -125,51 +139,58 @@ export default function GameView() {
             return (
               <div
                 key={id}
-                className={`flex flex-1 flex-col items-center rounded-md border-b-2 bg-slate-900 px-1 py-1 ${FAMILY_DOT[spec.family]}`}
-                title={`${spec.name} — ${spec.blurb}`}
+                aria-label={spec.name}
+                className={`flex min-h-[44px] flex-1 items-center justify-center rounded-md border-b-2 bg-slate-900 text-2xl ${FAMILY_DOT[spec.family]}`}
               >
-                <span className="text-sm leading-none">{spec.icon}</span>
-                <span className="mt-0.5 truncate text-[10px] leading-none text-slate-400">{spec.name}</span>
+                {spec.icon}
               </div>
             );
           })}
         </div>
 
-        {selected ? (
+        {selected && (
           <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1 rounded-lg bg-slate-900 px-3 py-2">
-              <p className="truncate text-sm font-semibold">
-                {selected.icon} {selected.name} · tier {selected.tier}
-              </p>
-              <p className="text-[11px] text-slate-400">
-                {hud.partners.length > 0
-                  ? `Tap a highlighted tower to merge — the result re-rolls`
-                  : selected.family === "melee"
-                    ? `Holding ${selected.blocking} · ${selected.hp}/${selected.maxHp} hp`
-                    : towerSpec(selected.towerId).blurb}
-              </p>
+            <div className="num flex min-h-[44px] min-w-0 flex-1 items-center gap-3 rounded-lg bg-slate-900 px-3 text-base ring-1 ring-slate-700">
+              <span className="text-2xl" aria-label={selected.name}>
+                {selected.icon}
+              </span>
+              <span className="font-bold text-slate-50" aria-label="tier">
+                ★{selected.tier}
+              </span>
+              {selected.maxHp > 0 && (
+                <span className="text-emerald-300" aria-label="hit points">
+                  ❤{selected.hp}
+                </span>
+              )}
+              {selected.blocking > 0 && (
+                <span className="text-amber-300" aria-label="blocking">
+                  🛑{selected.blocking}
+                </span>
+              )}
+              {hud.partners.length > 0 && (
+                <span className="ml-auto text-emerald-300" aria-label="merge partners">
+                  🔁{hud.partners.length}
+                </span>
+              )}
             </div>
             <button
               onClick={game.sellSelected}
-              className="shrink-0 rounded-lg bg-slate-800 px-4 py-3 text-sm font-medium text-slate-300"
+              aria-label={`sell for ${selected.sellValue} mana`}
+              className="num flex min-h-[44px] shrink-0 items-center gap-1 rounded-lg bg-slate-800 px-4 text-base font-semibold text-slate-100 ring-1 ring-slate-600"
             >
-              Sell {selected.sellValue}
+              💰{selected.sellValue}
             </button>
           </div>
-        ) : (
-          <p className="px-1 py-1 text-[11px] leading-snug text-slate-500">
-            Tap a tower to select it. Two of the same type and tier can merge —
-            tier goes up, the type re-rolls.
-          </p>
         )}
 
         <button
           onClick={game.summon}
           disabled={!hud.canAfford || over}
-          className="flex items-center justify-between rounded-lg bg-emerald-500 px-5 py-3.5 text-base font-semibold text-slate-950 disabled:bg-slate-800 disabled:text-slate-500"
+          aria-label={`summon for ${hud.summonCost} mana`}
+          className="num flex min-h-[56px] items-center justify-between rounded-lg bg-emerald-500 px-5 text-2xl font-bold text-slate-950 disabled:bg-slate-800 disabled:text-slate-500"
         >
-          <span>Summon</span>
-          <span className="tabular-nums">{hud.summonCost} mana</span>
+          <span aria-hidden>✨</span>
+          <span aria-hidden>💧{hud.summonCost}</span>
         </button>
       </div>
     </div>
