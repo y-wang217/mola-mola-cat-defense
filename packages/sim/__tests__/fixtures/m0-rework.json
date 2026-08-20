@@ -9,12 +9,13 @@
     "venom",
     "hex"
   ],
-  "ticks": 6453,
+  "ticks": 6663,
   "coverage": {
     "summons": 17,
     "merges": 2,
     "sells": 1,
-    "noRoom": 137
+    "noRoom": 133,
+    "upgrades": 3
   },
   "inputLog": [
     {
@@ -82,16 +83,23 @@
       "inputs": [
         {
           "tick": 900,
+          "kind": "family_upgrade",
+          "payload": {
+            "towerId": "arrow"
+          }
+        },
+        {
+          "tick": 900,
           "kind": "summon",
           "payload": {}
         }
       ]
     },
     {
-      "tick": 1075,
+      "tick": 1025,
       "inputs": [
         {
-          "tick": 1075,
+          "tick": 1025,
           "kind": "summon",
           "payload": {}
         }
@@ -104,27 +112,37 @@
           "tick": 1200,
           "kind": "merge",
           "payload": {
-            "sourceId": 30,
+            "sourceId": 41,
             "targetId": 1
           }
         }
       ]
     },
     {
-      "tick": 1250,
+      "tick": 1225,
       "inputs": [
         {
-          "tick": 1250,
+          "tick": 1225,
           "kind": "summon",
           "payload": {}
         }
       ]
     },
     {
-      "tick": 1450,
+      "tick": 1400,
       "inputs": [
         {
-          "tick": 1450,
+          "tick": 1400,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 1575,
+      "inputs": [
+        {
+          "tick": 1575,
           "kind": "summon",
           "payload": {}
         }
@@ -153,30 +171,20 @@
       ]
     },
     {
-      "tick": 1700,
+      "tick": 1825,
       "inputs": [
         {
-          "tick": 1700,
+          "tick": 1825,
           "kind": "summon",
           "payload": {}
         }
       ]
     },
     {
-      "tick": 1925,
+      "tick": 2050,
       "inputs": [
         {
-          "tick": 1925,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
-      "tick": 2150,
-      "inputs": [
-        {
-          "tick": 2150,
+          "tick": 2050,
           "kind": "summon",
           "payload": {}
         }
@@ -196,60 +204,47 @@
       ]
     },
     {
-      "tick": 2400,
+      "tick": 2275,
       "inputs": [
         {
-          "tick": 2400,
+          "tick": 2275,
           "kind": "summon",
           "payload": {}
         }
       ]
     },
     {
-      "tick": 2625,
+      "tick": 2525,
       "inputs": [
         {
-          "tick": 2625,
+          "tick": 2525,
           "kind": "summon",
           "payload": {}
         }
       ]
     },
     {
-      "tick": 2850,
+      "tick": 2750,
       "inputs": [
         {
-          "tick": 2850,
+          "tick": 2750,
           "kind": "summon",
           "payload": {}
         }
       ]
     },
     {
-      "tick": 3050,
+      "tick": 3000,
       "inputs": [
         {
-          "tick": 3050,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
-      "tick": 3075,
-      "inputs": [
+          "tick": 3000,
+          "kind": "family_upgrade",
+          "payload": {
+            "towerId": "arrow"
+          }
+        },
         {
-          "tick": 3075,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
-      "tick": 3100,
-      "inputs": [
-        {
-          "tick": 3100,
+          "tick": 3000,
           "kind": "summon",
           "payload": {}
         }
@@ -266,82 +261,14 @@
       ]
     },
     {
-      "tick": 3150,
-      "inputs": [
-        {
-          "tick": 3150,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
-      "tick": 3175,
-      "inputs": [
-        {
-          "tick": 3175,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
-      "tick": 3200,
-      "inputs": [
-        {
-          "tick": 3200,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
-      "tick": 3225,
-      "inputs": [
-        {
-          "tick": 3225,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
-      "tick": 3250,
-      "inputs": [
-        {
-          "tick": 3250,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
-      "tick": 3275,
-      "inputs": [
-        {
-          "tick": 3275,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
       "tick": 3300,
       "inputs": [
         {
           "tick": 3300,
-          "kind": "summon",
-          "payload": {}
-        }
-      ]
-    },
-    {
-      "tick": 3325,
-      "inputs": [
-        {
-          "tick": 3325,
-          "kind": "summon",
-          "payload": {}
+          "kind": "family_upgrade",
+          "payload": {
+            "towerId": "frost"
+          }
         }
       ]
     },
@@ -448,6 +375,13 @@
     {
       "tick": 3600,
       "inputs": [
+        {
+          "tick": 3600,
+          "kind": "family_upgrade",
+          "payload": {
+            "towerId": "arrow"
+          }
+        },
         {
           "tick": 3600,
           "kind": "summon",
@@ -1594,7 +1528,87 @@
           "payload": {}
         }
       ]
+    },
+    {
+      "tick": 6475,
+      "inputs": [
+        {
+          "tick": 6475,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 6500,
+      "inputs": [
+        {
+          "tick": 6500,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 6525,
+      "inputs": [
+        {
+          "tick": 6525,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 6550,
+      "inputs": [
+        {
+          "tick": 6550,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 6575,
+      "inputs": [
+        {
+          "tick": 6575,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 6600,
+      "inputs": [
+        {
+          "tick": 6600,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 6625,
+      "inputs": [
+        {
+          "tick": 6625,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "tick": 6650,
+      "inputs": [
+        {
+          "tick": 6650,
+          "kind": "summon",
+          "payload": {}
+        }
+      ]
     }
   ],
-  "hash": "0e38aa9e"
+  "hash": "eb2b7927"
 }

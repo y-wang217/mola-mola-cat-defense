@@ -16,11 +16,14 @@
 
 import { MAX_LIVES, SCORE_PER_LIFE, SCORE_PER_WAVE, leakDamageFor, spawnIntervalFor } from "./content.js";
 import {
+  FAMILY_UPGRADE_MAX_LEVEL,
   MANA_REGEN_AMOUNT,
   MANA_REGEN_INTERVAL,
   SELL_REFUND_PCT,
   STARTING_MANA,
   bountyFor,
+  familyDamagePct,
+  familyUpgradeCost,
   summonCostFor,
 } from "./economy.js";
 import { ENEMY_SPECS, effectiveDamage } from "./enemies.js";
@@ -30,7 +33,10 @@ import { buildPath, nearestLaneDistance, posAt, tileCentre, type PathGeometry } 
 import { cloneRng, seedRng } from "./rng.js";
 import { applyStatus, expireStatuses, hasStatus, magnitudeOf } from "./status.js";
 import { trySummon } from "./summon.js";
-import { atTier, rangeAtTier, towerSpec, type ShotEffect, type StatusApplyEffect } from "./towers.js";
+import {
+  atTier, hasDamageAxis, rangeAtTier, towerSpec,
+  type ShotEffect, type StatusApplyEffect,
+} from "./towers.js";
 import type {
   Enemy, GameState, Input, LevelDef, Projectile, Tower, TowerId, WaveScaling,
 } from "./types.js";
@@ -58,6 +64,9 @@ export function createInitialState(level: LevelDef, roster: TowerId[]): GameStat
     manaFromKills: 0,
     summonCost: summonCostFor(0),
     summonsUsed: 0,
+    // One entry per roster slot, in roster order. Nothing outside the roster
+    // can ever be summoned or rolled into, so nothing else needs a key.
+    familyUpgradeLevels: Object.fromEntries(roster.map((id) => [id, 0])),
     lives: MAX_LIVES,
     waveIndex: 0,
     waveTick: 0,
@@ -85,6 +94,9 @@ function cloneState(s: GameState): GameState {
     manaFromKills: s.manaFromKills,
     summonCost: s.summonCost,
     summonsUsed: s.summonsUsed,
+    // Spread preserves insertion order, so the serialized order — and the
+    // fixture hash — does not depend on how the record was built.
+    familyUpgradeLevels: { ...s.familyUpgradeLevels },
     lives: s.lives,
     waveIndex: s.waveIndex,
     waveTick: s.waveTick,
@@ -149,12 +161,53 @@ function applyInputs(s: GameState, inputs: Input[], path: PathGeometry): void {
       case "sell":
         sellTower(s, input.payload.towerId);
         break;
+      case "family_upgrade":
+        tryFamilyUpgrade(s, input.payload.towerId);
+        break;
       case "ability":
         // No abilities in M0. The kind exists because §6 defines it and the
         // replay format should not change when one is added.
         break;
     }
   }
+}
+
+/**
+ * Raise one family's upgrade level. Every check is a no-op rather than an
+ * error, exactly like an unaffordable summon: an input the sim will not honour
+ * must cost nothing, or the same replay would diverge.
+ *
+ * Consumes no RNG. The draw order documented in summon.ts and merge.ts is
+ * unaffected by this input existing.
+ */
+function tryFamilyUpgrade(s: GameState, family: TowerId): void {
+  const level = s.familyUpgradeLevels[family];
+  if (level === undefined) return; // not in this run's roster
+  if (level >= FAMILY_UPGRADE_MAX_LEVEL) return;
+  // Refuse rather than charge for nothing: pure-control towers have no damage
+  // number for the upgrade to scale. See hasDamageAxis.
+  if (!hasDamageAxis(family)) return;
+
+  const cost = familyUpgradeCost(level);
+  if (s.mana < cost) return;
+
+  s.mana -= cost;
+  s.familyUpgradeLevels[family] = level + 1;
+  s.events.push({ kind: "family_upgraded", towerId: family, level: level + 1 });
+}
+
+/**
+ * Damage for one tower, tier and family upgrade applied in that order.
+ *
+ * Every damage number in the sim goes through here. A merged tower re-rolls
+ * its type, so it reads the level of the family it BECAME — which is looked up
+ * from `towerId` at the moment of the hit, not cached on the tower.
+ */
+function towerDamage(s: GameState, towerId: TowerId, base: number, tier: number): number {
+  const scaled = atTier(base, tier);
+  const level = s.familyUpgradeLevels[towerId] ?? 0;
+  if (level === 0) return scaled;
+  return Math.floor((scaled * familyDamagePct(level)) / 100);
 }
 
 function sellTower(s: GameState, towerId: number): void {
@@ -381,7 +434,7 @@ function resolveMelee(s: GameState): void {
     } else if (t.blocking.length > 0) {
       const victim = findEnemy(s, t.blocking[0]);
       if (victim) {
-        damageEnemy(s, victim, atTier(effect.attackDamage, t.tier));
+        damageEnemy(s, victim, towerDamage(s, t.towerId, effect.attackDamage, t.tier));
         t.cooldown = effect.attackCooldown;
       }
     }
@@ -410,7 +463,7 @@ function resolveMelee(s: GameState): void {
       for (const e of s.enemies) {
         if (!e.alive) continue;
         if (dist2(t.x, t.y, e.x, e.y) > r2) continue;
-        damageEnemy(s, e, atTier(effect.deathDamage, t.tier));
+        damageEnemy(s, e, towerDamage(s, t.towerId, effect.deathDamage, t.tier));
         if (e.alive && effect.deathStunTicks > 0) {
           applyStatus(
             e.statuses,
@@ -501,7 +554,7 @@ function fireShot(s: GameState, t: Tower, effect: ShotEffect, candidates: Enemy[
     tx: target.x,
     ty: target.y,
     targetId: target.id,
-    damage: atTier(effect.damage, t.tier),
+    damage: towerDamage(s, t.towerId, effect.damage, t.tier),
     speed: effect.projectileSpeed,
     splash: effect.splash,
     hopsLeft,
@@ -529,17 +582,27 @@ function applyStatusEffect(
           .slice(0, effect.maxTargets);
 
   for (const e of targets) {
+    // Poison magnitude IS damage — it is the one status that deals it, and it
+    // is what a Venom family upgrade buys. Slow, vulnerable and armour shred
+    // are control, so they scale with tier only.
+    const magnitude =
+      effect.status === "poison"
+        ? towerDamage(s, t.towerId, effect.magnitude, t.tier)
+        : atTier(effect.magnitude, t.tier);
+
     applyStatus(
       e.statuses,
       {
         kind: effect.status,
-        magnitude: atTier(effect.magnitude, t.tier),
+        magnitude,
         remainingTicks: effect.durationTicks,
         sourceId: t.towerId,
       },
       ENEMY_SPECS[e.kind].armor,
     );
-    if (effect.damage > 0) damageEnemy(s, e, atTier(effect.damage, t.tier));
+    if (effect.damage > 0) {
+      damageEnemy(s, e, towerDamage(s, t.towerId, effect.damage, t.tier));
+    }
   }
   t.cooldown = effect.cooldown;
 }

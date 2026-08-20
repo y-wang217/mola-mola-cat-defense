@@ -26,6 +26,7 @@ const COLORS = {
   status: 0xc084fc,
   range: 0x58d6ff,
   merge: 0x3fb950,
+  upgrade: 0xffd166,
   hp: 0x3fb950,
   hpBack: 0x00000088,
   engaged: 0xff6b6b,
@@ -83,6 +84,9 @@ const ENEMY_GLYPH_MIN = TILE * 0.42;
  */
 const WAVE_SWEEP_MS = 900;
 
+/** The board-wide pulse when a family upgrade lands, ms. */
+const FAMILY_PULSE_MS = 650;
+
 /** The merge-moment animation, ms. See playMerge. */
 const MERGE_FX_MS = 700;
 /** How long the re-rolled type flashes at 2x. The re-roll IS the mechanic. */
@@ -117,6 +121,7 @@ export class Renderer {
   private mergeableIds: number[] = [];
   private mergeFx: (MergeFx & { start: number })[] = [];
   private waveSweepStart = -1;
+  private familyPulse: { towerId: string; start: number }[] = [];
   private built = false;
 
   async init(canvasHost: HTMLElement, state: GameState): Promise<void> {
@@ -162,6 +167,17 @@ export class Renderer {
   /** A new wave started spawning. See WAVE_SWEEP_MS. */
   playWaveStart(): void {
     this.waveSweepStart = performance.now();
+  }
+
+  /**
+   * A family upgrade landed: every tower of that type pulses simultaneously.
+   *
+   * The simultaneity is the message. A per-tower upgrade and a family upgrade
+   * look identical if only one tower reacts, and the whole reason this sink
+   * exists is that it reaches the whole board at once.
+   */
+  playFamilyPulse(towerId: string): void {
+    this.familyPulse.push({ towerId, start: performance.now() });
   }
 
   resize(width: number, height: number, state: GameState): void {
@@ -262,7 +278,9 @@ export class Renderer {
 
     // A slow breathing value, shared by every standing pulse on the board so
     // they beat together rather than shimmering independently.
-    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 320);
+    const now = performance.now();
+    const pulse = 0.5 + 0.5 * Math.sin(now / 320);
+    this.familyPulse = this.familyPulse.filter((fp) => now - fp.start < FAMILY_PULSE_MS);
 
     for (const t of cur.towers) {
       const spec = towerSpec(t.towerId);
@@ -288,6 +306,15 @@ export class Renderer {
       if (partner || selected) {
         g.roundRect(t.x - size * 0.66, t.y - size * 0.66, size * 1.32, size * 1.32, TILE * 0.14);
         g.stroke({ width: 52, color: partner ? COLORS.merge : 0xffffff, alpha: 0.95 });
+      }
+
+      // Family upgrade: a ring thrown off every tower of the type at once.
+      for (const fp of this.familyPulse) {
+        if (fp.towerId !== t.towerId) continue;
+        const k = (now - fp.start) / FAMILY_PULSE_MS;
+        if (k >= 1) continue;
+        g.circle(t.x, t.y, size * (0.6 + k * 1.4));
+        g.stroke({ width: 120 * (1 - k), color: COLORS.upgrade, alpha: 1 - k });
       }
 
       // Tier needs its own indicator: emoji cannot be tinted, so tier cannot

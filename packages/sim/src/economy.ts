@@ -198,3 +198,61 @@ export function bountyTable(level: LevelDef): Record<EnemyKind, number> {
   }
   return out;
 }
+
+// --- family upgrades ------------------------------------------------------
+
+/**
+ * The second spend sink: upgrade a tower FAMILY and every tower of that type
+ * on the board gets stronger, plus every one summoned afterwards.
+ *
+ * A note on the word "family". This patch uses it the way the design brief
+ * does — one family per roster entry, five buttons for five towers, e.g. the
+ * "arrow family". The codebase already spends `TowerFamily` on the three-way
+ * projectile/melee/status class, so the state is keyed by `TowerId` rather
+ * than introducing a second meaning for the same word. Same concept as the
+ * brief, existing vocabulary.
+ *
+ * This is distinct from tier. Tier comes from merging one tower with another
+ * and is unchanged. The point of having both is the tension: a summon buys
+ * board presence and a lottery ticket, an upgrade buys certainty on what is
+ * already there, and the same mana cannot do both.
+ *
+ * In-run only. Levels reset at the start of every run and nothing is stored
+ * between them — a persistent track is a legitimate direction but it needs
+ * save state, a cross-run progression curve and a balance surface to match,
+ * which is a milestone rather than a patch.
+ */
+
+/** Damage bonus per level, as an integer percentage. Damage ONLY: not range,
+ *  not fire rate. One axis, so the balance surface stays small. */
+export const FAMILY_UPGRADE_DAMAGE_PCT_PER_LEVEL = 15;
+
+/** A visible ceiling rather than an infinite track. */
+export const FAMILY_UPGRADE_MAX_LEVEL = 5;
+
+/** What the first level of any family costs. Sized against the summon curve,
+ *  which opens at 40: the first upgrade is a slightly worse summon and the
+ *  last one is worth six of them. */
+export const FAMILY_UPGRADE_BASE_COST = 50;
+
+/**
+ * Per-level cost multiplier. Escalation is what makes "spread across families
+ * or commit to one" a real decision instead of arithmetic.
+ *
+ * Multiply-and-round is exactly specified by IEEE754 on integers this small,
+ * so this stays reproducible across engines — unlike Math.pow, which is only
+ * implementation-approximated and is why the cost is accumulated in a loop.
+ */
+export const FAMILY_UPGRADE_COST_GROWTH = 1.6;
+
+/** Mana to go from `level` to `level + 1`. 50, 80, 128, 205, 328. */
+export function familyUpgradeCost(level: number): number {
+  let cost = FAMILY_UPGRADE_BASE_COST;
+  for (let i = 0; i < level; i++) cost = Math.round(cost * FAMILY_UPGRADE_COST_GROWTH);
+  return cost;
+}
+
+/** Damage scale for a family at this level, as an integer percentage. */
+export function familyDamagePct(level: number): number {
+  return 100 + level * FAMILY_UPGRADE_DAMAGE_PCT_PER_LEVEL;
+}

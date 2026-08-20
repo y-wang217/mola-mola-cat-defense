@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  FAMILY_UPGRADE_MAX_LEVEL,
   GAME_SPEED_MULTIPLIER,
   MAX_LIVES,
   MAX_TIER,
@@ -19,6 +20,8 @@ import {
   SELL_REFUND_PCT,
   TICKS_PER_SECOND,
   createInitialState,
+  familyUpgradeCost,
+  hasDamageAxis,
   mergePartners,
   tick,
   towerSpec,
@@ -58,6 +61,27 @@ export type HudTower = {
   hasPartner: boolean;
 };
 
+/**
+ * One roster slot, as the upgrade row needs it.
+ *
+ * "Family" here means the tower TYPE — the brief's sense, one per roster slot.
+ * `upgradable` is false for the pure-control towers, which have no damage
+ * number for the bonus to scale: the button is shown but visibly inert rather
+ * than charging for nothing.
+ */
+export type HudFamily = {
+  towerId: TowerId;
+  icon: string;
+  family: string;
+  level: number;
+  maxLevel: number;
+  cost: number;
+  affordable: boolean;
+  upgradable: boolean;
+  /** Towers of this type on the board right now. Nothing to multiply at zero. */
+  onBoard: number;
+};
+
 export type Hud = {
   status: RunStatus;
   mana: number;
@@ -78,6 +102,8 @@ export type Hud = {
   mergeableIds: number[];
   /** How many merges could be performed right now. Zero hides the counter. */
   mergesAvailable: number;
+  /** The five roster slots, with their upgrade state. */
+  families: HudFamily[];
 };
 
 /**
@@ -145,6 +171,22 @@ function toHud(s: GameState, selectedId: number | null): Hud {
     partners: selectedId === null ? [] : mergePartners(s, selectedId),
     mergeableIds,
     mergesAvailable,
+    families: s.roster.map((id) => {
+      const level = s.familyUpgradeLevels[id] ?? 0;
+      const maxed = level >= FAMILY_UPGRADE_MAX_LEVEL;
+      const cost = familyUpgradeCost(level);
+      return {
+        towerId: id,
+        icon: towerSpec(id).icon,
+        family: towerSpec(id).family,
+        level,
+        maxLevel: FAMILY_UPGRADE_MAX_LEVEL,
+        cost,
+        affordable: s.mana >= cost,
+        upgradable: hasDamageAxis(id) && !maxed,
+        onBoard: s.towers.filter((t) => t.towerId === id).length,
+      };
+    }),
   };
 }
 
@@ -281,6 +323,11 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
             // spawn edge sweeps (Renderer), and this is the cue.
             play("wave");
             rendererRef.current?.playWaveStart();
+          } else if (ev.kind === "family_upgraded") {
+            // Every tower of the family pulses at once. Without the board-wide
+            // reaction this is indistinguishable from upgrading one tower.
+            play("upgrade");
+            rendererRef.current?.playFamilyPulse(ev.towerId);
           } else if (ev.kind === "summoned") {
             play("summon");
           } else if (ev.kind === "merged") {
@@ -372,6 +419,13 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
     [enqueue],
   );
 
+  const upgradeFamily = useCallback(
+    (towerId: TowerId) => {
+      enqueue((t) => ({ tick: t, kind: "family_upgrade", payload: { towerId } }));
+    },
+    [enqueue],
+  );
+
   const sellSelected = useCallback(() => {
     const id = selectedRef.current;
     if (id === null) return;
@@ -391,5 +445,6 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
     summon,
     tapTower,
     sellSelected,
+    upgradeFamily,
   };
 }

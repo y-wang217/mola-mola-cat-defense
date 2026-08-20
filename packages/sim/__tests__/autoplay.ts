@@ -11,8 +11,9 @@
 
 import { createInitialState, tick } from "../src/tick.js";
 import { mergePartners } from "../src/merge.js";
+import { FAMILY_UPGRADE_MAX_LEVEL, familyUpgradeCost } from "../src/economy.js";
 import { legalTileIndices } from "../src/summon.js";
-import { towerSpec } from "../src/towers.js";
+import { hasDamageAxis, towerSpec } from "../src/towers.js";
 import type { GameState, Input, LevelDef, TowerId } from "../src/types.js";
 
 export type Policy = {
@@ -44,12 +45,22 @@ export type Policy = {
   summonFromTick: number;
   /** Stop summoning after this many. Models a player who does almost nothing. */
   maxSummons: number;
+  /**
+   * Once the board holds at least this many towers, spend on family upgrades
+   * before summoning. Infinity models a player who ignores the sink entirely,
+   * which is the baseline every other suite measures against.
+   */
+  upgradeFromTowers: number;
 };
 
 export const DEFAULT_POLICY: Policy = {
   merge: true, mergeOnlyWhenFull: true, sellWhenFull: true,
   summonFromTick: 0, maxSummons: Number.MAX_SAFE_INTEGER,
+  upgradeFromTowers: Number.POSITIVE_INFINITY,
 };
+
+/** Spends on family upgrades once the board is established. */
+export const UPGRADER: Policy = { ...DEFAULT_POLICY, upgradeFromTowers: 8 };
 
 /** Careless play: merge the instant a pair exists, which shrinks the board. */
 export const GREEDY_MERGE: Policy = { ...DEFAULT_POLICY, mergeOnlyWhenFull: false };
@@ -62,6 +73,7 @@ export type PlayResult = {
   merges: number;
   sells: number;
   noRoom: number;
+  upgrades: number;
 };
 
 export function autoplay(
@@ -79,6 +91,7 @@ export function autoplay(
   let merges = 0;
   let sells = 0;
   let noRoom = 0;
+  let upgrades = 0;
 
   while (s.status !== "won" && s.status !== "lost" && ticks < maxTicks) {
     if (until && until(s)) break;
@@ -101,6 +114,16 @@ export function autoplay(
         });
         merges++;
         break;
+      }
+    }
+
+    // Upgrades come before the summon, because the two compete for the same
+    // mana and whichever is asked for first wins the tick.
+    if (s.towers.length >= policy.upgradeFromTowers) {
+      const target = bestUpgrade(s);
+      if (target && s.mana >= familyUpgradeCost(s.familyUpgradeLevels[target])) {
+        inputs.push({ tick: s.tick, kind: "family_upgrade", payload: { towerId: target } });
+        upgrades++;
       }
     }
 
@@ -127,7 +150,27 @@ export function autoplay(
     ticks++;
   }
 
-  return { final: s, inputLog, ticks, summons, merges, sells, noRoom };
+  return { final: s, inputLog, ticks, summons, merges, sells, noRoom, upgrades };
+}
+
+/**
+ * The family with the most towers on the board that could still be upgraded.
+ * Concentrating beats spreading under an escalating cost only when the board
+ * actually holds that family, which is what makes the choice interesting.
+ */
+function bestUpgrade(s: GameState): TowerId | undefined {
+  let best: TowerId | undefined;
+  let bestCount = 0;
+  for (const id of s.roster) {
+    if (!hasDamageAxis(id)) continue;
+    if (s.familyUpgradeLevels[id] >= FAMILY_UPGRADE_MAX_LEVEL) continue;
+    const count = s.towers.filter((t) => t.towerId === id).length;
+    if (count > bestCount) {
+      bestCount = count;
+      best = id;
+    }
+  }
+  return bestCount > 0 ? best : undefined;
 }
 
 /** Replay a recorded input log from a fresh initial state. */
@@ -213,11 +256,23 @@ export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: numb
   let noRoom = 0;
   let sold = false;
   let ticks = 0;
+  let upgrades = 0;
 
   for (let i = 0; i < totalTicks; i++) {
     if (s.status === "won" || s.status === "lost") break;
     const inputs: Input[] = [];
 
+    // Family upgrades go in FIRST, before the summon, because the two compete
+    // for the same mana and the ordering decides which one wins on a tick where
+    // both are asked for. Two land on a family with a damage axis; the third is
+    // aimed at a pure-control family and the sim must refuse it without taking
+    // the mana. All three paths belong in the fixture.
+    if (s.tick === 900 || s.tick === 3000 || s.tick === 3600) {
+      inputs.push({ tick: s.tick, kind: "family_upgrade", payload: { towerId: "arrow" } });
+    }
+    if (s.tick === 3300) {
+      inputs.push({ tick: s.tick, kind: "family_upgrade", payload: { towerId: "frost" } });
+    }
     if (s.tick % 25 === 0 && s.mana >= s.summonCost) {
       inputs.push({ tick: s.tick, kind: "summon", payload: {} });
     }
@@ -244,8 +299,9 @@ export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: numb
       if (e.kind === "summoned") summons++;
       else if (e.kind === "no_room") noRoom++;
       else if (e.kind === "merged") merges++;
+      else if (e.kind === "family_upgraded") upgrades++;
     }
   }
 
-  return { final: s, inputLog, ticks, summons, merges, sells, noRoom };
+  return { final: s, inputLog, ticks, summons, merges, sells, noRoom, upgrades };
 }

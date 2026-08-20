@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { TOWER_POOL } from "@siege/sim";
-import type { TowerId } from "@siege/sim";
 import { useGame } from "@/game/useGame";
 import Hud from "./Hud";
 import RosterSelect from "./RosterSelect";
@@ -129,21 +127,51 @@ export default function GameView() {
       </div>
 
       <div className="flex shrink-0 flex-col gap-2">
-        {/* The roster stays on screen: the player has to be able to reason
-            about what the next summon might be. Emoji only — the names were
-            unreadable at this size and carried nothing the glyph does not. */}
+        {/* The roster row and the upgrade row are the same five things, so
+            they are one control. It keeps the draw pool on screen — the player
+            has to be able to reason about what the next summon might be — and
+            it is where the mana goes when it is not going into a summon.
+
+            Emoji only: the names were unreadable at this size and carried
+            nothing the glyph does not. */}
         <div className="flex gap-1">
-          {game.roster.map((id: TowerId) => {
-            const spec = TOWER_POOL.find((t) => t.id === id);
-            if (!spec) return null;
+          {hud.families.map((f) => {
+            const active = f.upgradable && f.affordable;
             return (
-              <div
-                key={id}
-                aria-label={spec.name}
-                className={`flex min-h-[44px] flex-1 items-center justify-center rounded-md border-b-2 bg-slate-900 text-2xl ${FAMILY_DOT[spec.family]}`}
+              <button
+                key={f.towerId}
+                onClick={() => game.upgradeFamily(f.towerId)}
+                disabled={!active || over}
+                aria-label={
+                  f.upgradable
+                    ? `upgrade ${f.towerId} family, level ${f.level} of ${f.maxLevel}, ${f.cost} mana`
+                    : `${f.towerId}, no upgrade available`
+                }
+                className={[
+                  "flex min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 rounded-md border-b-2 bg-slate-900",
+                  FAMILY_DOT[f.family],
+                  active ? "" : "opacity-40",
+                ].join(" ")}
               >
-                {spec.icon}
-              </div>
+                <span className="text-2xl leading-none" aria-hidden>
+                  {f.icon}
+                </span>
+                {/* Level as pips, cost as a number. Affordability is carried by
+                    the dimming, so it can be read without parsing digits. */}
+                <span className="flex items-center gap-[3px]" aria-hidden>
+                  {Array.from({ length: f.maxLevel }, (_, i) => (
+                    <span
+                      key={i}
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        i < f.level ? "bg-amber-300" : "bg-slate-600"
+                      }`}
+                    />
+                  ))}
+                </span>
+                <span className="num text-base font-semibold leading-none text-slate-200" aria-hidden>
+                  {f.upgradable ? f.cost : "—"}
+                </span>
+              </button>
             );
           })}
         </div>

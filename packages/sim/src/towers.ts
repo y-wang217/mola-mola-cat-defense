@@ -242,3 +242,25 @@ export function rangeAtTier(base: number, tier: number): number {
 export function tileClassOf(id: TowerId): TileClass {
   return towerSpec(id).tileClass;
 }
+
+/**
+ * Whether a family upgrade would do anything for this tower.
+ *
+ * Family upgrades scale damage and only damage, so a tower with no damage
+ * number has nothing to scale. That is currently every status tower except
+ * Venom: Frost, Hex and Rasp are pure control, and poison is the one status
+ * that is damage. The sim refuses the upgrade rather than taking the mana, and
+ * the UI marks the button inert — a button that charges for nothing is worse
+ * than a button that is visibly unavailable.
+ */
+export function hasDamageAxis(id: TowerId): boolean {
+  const effect = towerSpec(id).effect;
+  switch (effect.kind) {
+    case "shot":
+      return effect.damage > 0;
+    case "block":
+      return effect.attackDamage > 0 || effect.deathDamage > 0;
+    case "apply_status":
+      return effect.damage > 0 || effect.status === "poison";
+  }
+}

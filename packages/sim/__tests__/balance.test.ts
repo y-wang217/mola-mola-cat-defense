@@ -20,7 +20,7 @@ import { M0_LEVEL } from "../src/level.js";
 import { GAME_SPEED_MULTIPLIER, TICKS_PER_SECOND } from "../src/economy.js";
 import {
   AB_NO_MELEE, AB_WITH_MELEE, BALANCED, GREEDY_MERGE, MIXED,
-  NO_PROJECTILE, NO_STATUS, STATUS_HEAVY, autoplay,
+  NO_PROJECTILE, NO_STATUS, STATUS_HEAVY, UPGRADER, autoplay,
 } from "./autoplay.js";
 
 /**
@@ -134,5 +134,37 @@ describe("the summon economy holds", () => {
     const run = autoplay(M0_LEVEL, BALANCED);
     expect(run.summons).toBeLessThan(M0_LEVEL.terrain.tiles.length * 3);
     expect(run.merges).toBeGreaterThan(0);
+  });
+});
+
+describe("the family-upgrade sink is a real choice", () => {
+  /**
+   * The point of the sink is tension: the same mana buys a summon or a family
+   * upgrade, never both. These assert that the trade is live rather than
+   * decorative — spending on upgrades measurably costs summons and measurably
+   * buys something back.
+   */
+  it("converts summons into upgrades rather than adding to them", () => {
+    const ignoring = autoplay(M0_LEVEL, BALANCED);
+    const spending = autoplay(M0_LEVEL, BALANCED, UPGRADER);
+    expect(spending.upgrades).toBeGreaterThan(0);
+    expect(ignoring.upgrades).toBe(0);
+    expect(spending.summons).toBeLessThanOrEqual(ignoring.summons);
+  });
+
+  it("is worth the mana, without being the only thing worth doing", () => {
+    const spending = autoplay(M0_LEVEL, BALANCED, UPGRADER);
+    expect(spending.final.status).toBe("won");
+    // A board still has to exist for the multiplier to multiply: the upgrading
+    // run keeps summoning, it does not switch to buying levels.
+    expect(spending.summons).toBeGreaterThan(spending.upgrades * 2);
+  });
+
+  it("leaves the pure-control families alone", () => {
+    // Frost, Hex and Rasp have no damage number, so the sim refuses to sell
+    // them a level rather than taking mana for nothing.
+    const { final } = autoplay(M0_LEVEL, BALANCED, UPGRADER);
+    expect(final.familyUpgradeLevels.hex).toBe(0);
+    expect(final.familyUpgradeLevels.rasp).toBe(0);
   });
 });

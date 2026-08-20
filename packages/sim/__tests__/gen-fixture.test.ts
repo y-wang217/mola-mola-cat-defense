@@ -23,7 +23,10 @@ it.skipIf(!process.env.REGEN_FIXTURE)("writes the golden fixture", () => {
     seed: M0_LEVEL.seed,
     roster: GOLDEN_ROSTER,
     ticks: run.ticks,
-    coverage: { summons: run.summons, merges: run.merges, sells: run.sells, noRoom: run.noRoom },
+    coverage: {
+      summons: run.summons, merges: run.merges, sells: run.sells,
+      noRoom: run.noRoom, upgrades: run.upgrades,
+    },
     inputLog: run.inputLog,
     hash: hashState(run.final),
   };
