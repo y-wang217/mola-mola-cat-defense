@@ -25,6 +25,24 @@ import type { LevelDef } from "./types.js";
 export const TICKS_PER_SECOND = 30;
 
 /**
+ * The global timescale. "Faster everything" from the playtest, as one number.
+ *
+ * It is deliberately NOT applied inside the sim. The sim's tick rate stays a
+ * fixed 30Hz and every stat stays denominated in ticks; what changes is how
+ * fast the driver DRAINS ticks — apps/web/game/useGame.ts advances the sim
+ * GAME_SPEED_MULTIPLIER ticks per 1/30s of wall clock. A tick is still a tick,
+ * the fixed-point arithmetic is untouched, and a replay is bit-identical
+ * whatever this is set to. Scattering a 2x across dozens of stats would have
+ * changed every constant, broken every fixture, and made future tuning a
+ * search-and-replace.
+ *
+ * The only place the sim needs to know about it is documentation: it is the
+ * bridge between a sim-second (30 ticks) and a wall-clock second, and the mana
+ * formula below is stated in both.
+ */
+export const GAME_SPEED_MULTIPLIER = 2.0;
+
+/**
  * The dial. See the module comment.
  *
  * Set to 0.3 rather than the 0.6 originally specified, on measured evidence —
@@ -44,6 +62,30 @@ export const KILL_MANA_SHARE = 0.3;
 
 /** Total income rate at a clean clear, held constant across the dial. */
 export const TARGET_MANA_PER_SECOND = 9;
+
+/**
+ * Mana income above the timescale. This is the most important number in the
+ * tempo patch and the first one to reach for if the game feels wrong.
+ *
+ * A uniform 2x makes the game twice as fast but produces no extra decisions:
+ * the player gets the same summons per wave, compressed into half the wall
+ * clock. Decisions per second rise, decisions per WAVE stay flat. The playtest
+ * asked for both, so income needs a multiplier on top of the timescale:
+ *
+ *   manaRate(wall clock) = baseManaRate * GAME_SPEED_MULTIPLIER * MANA_ACTION_DENSITY
+ *
+ * The GAME_SPEED_MULTIPLIER half of that is free — sim-seconds elapse twice as
+ * fast, so a per-tick income already doubles per wall-clock second. Only the
+ * density factor has to be paid for here, and it is what makes summons roughly
+ * 40% more frequent RELATIVE TO WAVE CONTENT than they were.
+ *
+ * Both halves of the hybrid model scale by it: the tick floor below and the
+ * kill-bounty pool. KILL_MANA_SHARE is untouched.
+ */
+export const MANA_ACTION_DENSITY = 1.4;
+
+/** Income per SIM second after the density multiplier. Double it for wall clock. */
+export const EFFECTIVE_MANA_PER_SECOND = TARGET_MANA_PER_SECOND * MANA_ACTION_DENSITY;
 
 /** Enough for two summons, since the first has no kills to fund it. */
 export const STARTING_MANA = 90;
@@ -69,7 +111,7 @@ export const MANA_REGEN_INTERVAL = 25;
  */
 export const MANA_REGEN_AMOUNT = Math.max(
   0,
-  Math.round((TARGET_MANA_PER_SECOND * (1 - KILL_MANA_SHARE) * MANA_REGEN_INTERVAL) / TICKS_PER_SECOND),
+  Math.round((EFFECTIVE_MANA_PER_SECOND * (1 - KILL_MANA_SHARE) * MANA_REGEN_INTERVAL) / TICKS_PER_SECOND),
 );
 
 // --- kill bounties --------------------------------------------------------
@@ -89,12 +131,14 @@ export const BOUNTY_WEIGHT: Record<EnemyKind, number> = {
 };
 
 /**
- * Ticks allowed per wave beyond its last spawn, for the run-length estimate.
- * Calibrated against measured clean clears (~260s), not guessed: too short and
- * the bounty pool is sized for a run briefer than the one actually played, and
- * total income lands under target.
+ * Ticks allowed AFTER the last spawn of the whole level, for the run-length
+ * estimate. One trailing allowance, not one per wave: with the break phase gone
+ * waves no longer wait for a clear, so the only slack in a run is the time the
+ * final stragglers spend walking the lane. Calibrated against measured clean
+ * clears — too short and the bounty pool is sized for a briefer run than the
+ * one actually played, and total income lands under target.
  */
-const CLEAR_ALLOWANCE_TICKS = 760;
+const CLEAR_ALLOWANCE_TICKS = 1300;
 
 /**
  * Not every enemy dies — some leak, and leaked enemies pay nothing. Sizing the
@@ -124,9 +168,11 @@ export function estimatedRunTicks(level: LevelDef): number {
     for (const group of wave.spawns) {
       lastSpawn = Math.max(lastSpawn, group.startTick + (group.count - 1) * group.intervalTicks);
     }
-    total += wave.prepTicks + lastSpawn + CLEAR_ALLOWANCE_TICKS;
+    // Wave N+1 starts spawning the tick wave N finishes spawning, so a wave
+    // costs exactly its own spawn span.
+    total += lastSpawn;
   }
-  return total;
+  return total + CLEAR_ALLOWANCE_TICKS;
 }
 
 /**
@@ -140,7 +186,7 @@ export function bountyFor(level: LevelDef, kind: EnemyKind): number {
   const weight = totalWeight(level);
   if (weight <= 0) return 0;
   const seconds = estimatedRunTicks(level) / TICKS_PER_SECOND;
-  const pool = (TARGET_MANA_PER_SECOND * KILL_MANA_SHARE * seconds) / EXPECTED_KILL_RATE;
+  const pool = (EFFECTIVE_MANA_PER_SECOND * KILL_MANA_SHARE * seconds) / EXPECTED_KILL_RATE;
   return Math.max(1, Math.round((pool * BOUNTY_WEIGHT[kind]) / weight));
 }
 
@@ -151,4 +197,62 @@ export function bountyTable(level: LevelDef): Record<EnemyKind, number> {
     out[kind] = bountyFor(level, kind);
   }
   return out;
+}
+
+// --- family upgrades ------------------------------------------------------
+
+/**
+ * The second spend sink: upgrade a tower FAMILY and every tower of that type
+ * on the board gets stronger, plus every one summoned afterwards.
+ *
+ * A note on the word "family". This patch uses it the way the design brief
+ * does — one family per roster entry, five buttons for five towers, e.g. the
+ * "arrow family". The codebase already spends `TowerFamily` on the three-way
+ * projectile/melee/status class, so the state is keyed by `TowerId` rather
+ * than introducing a second meaning for the same word. Same concept as the
+ * brief, existing vocabulary.
+ *
+ * This is distinct from tier. Tier comes from merging one tower with another
+ * and is unchanged. The point of having both is the tension: a summon buys
+ * board presence and a lottery ticket, an upgrade buys certainty on what is
+ * already there, and the same mana cannot do both.
+ *
+ * In-run only. Levels reset at the start of every run and nothing is stored
+ * between them — a persistent track is a legitimate direction but it needs
+ * save state, a cross-run progression curve and a balance surface to match,
+ * which is a milestone rather than a patch.
+ */
+
+/** Damage bonus per level, as an integer percentage. Damage ONLY: not range,
+ *  not fire rate. One axis, so the balance surface stays small. */
+export const FAMILY_UPGRADE_DAMAGE_PCT_PER_LEVEL = 15;
+
+/** A visible ceiling rather than an infinite track. */
+export const FAMILY_UPGRADE_MAX_LEVEL = 5;
+
+/** What the first level of any family costs. Sized against the summon curve,
+ *  which opens at 40: the first upgrade is a slightly worse summon and the
+ *  last one is worth six of them. */
+export const FAMILY_UPGRADE_BASE_COST = 50;
+
+/**
+ * Per-level cost multiplier. Escalation is what makes "spread across families
+ * or commit to one" a real decision instead of arithmetic.
+ *
+ * Multiply-and-round is exactly specified by IEEE754 on integers this small,
+ * so this stays reproducible across engines — unlike Math.pow, which is only
+ * implementation-approximated and is why the cost is accumulated in a loop.
+ */
+export const FAMILY_UPGRADE_COST_GROWTH = 1.6;
+
+/** Mana to go from `level` to `level + 1`. 50, 80, 128, 205, 328. */
+export function familyUpgradeCost(level: number): number {
+  let cost = FAMILY_UPGRADE_BASE_COST;
+  for (let i = 0; i < level; i++) cost = Math.round(cost * FAMILY_UPGRADE_COST_GROWTH);
+  return cost;
+}
+
+/** Damage scale for a family at this level, as an integer percentage. */
+export function familyDamagePct(level: number): number {
+  return 100 + level * FAMILY_UPGRADE_DAMAGE_PCT_PER_LEVEL;
 }

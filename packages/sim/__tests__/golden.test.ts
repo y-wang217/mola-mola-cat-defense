@@ -24,7 +24,7 @@ type Fixture = {
   seed: number;
   roster: string[];
   ticks: number;
-  coverage: { summons: number; merges: number; sells: number; noRoom: number };
+  coverage: { summons: number; merges: number; sells: number; noRoom: number; upgrades: number };
   inputLog: { tick: number; inputs: Input[] }[];
   hash: string;
 };
@@ -48,6 +48,7 @@ describe("golden replay", () => {
     expect(fixture.coverage.merges).toBeGreaterThanOrEqual(2);
     expect(fixture.coverage.sells).toBeGreaterThanOrEqual(1);
     expect(fixture.coverage.noRoom).toBeGreaterThanOrEqual(1);
+    expect(fixture.coverage.upgrades).toBeGreaterThanOrEqual(2);
   });
 
   it("reproduces the recorded hash from the scripted run", () => {

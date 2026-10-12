@@ -11,20 +11,35 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  M0_LEVEL,
+  FAMILY_UPGRADE_MAX_LEVEL,
+  GAME_SPEED_MULTIPLIER,
+  MAX_LIVES,
   MAX_TIER,
+  M0_LEVEL,
   ROSTER_SIZE,
   SELL_REFUND_PCT,
   TICKS_PER_SECOND,
   createInitialState,
+  familyUpgradeCost,
+  hasDamageAxis,
   mergePartners,
   tick,
   towerSpec,
 } from "@siege/sim";
 import type { GameState, Input, RunStatus, TowerId } from "@siege/sim";
 import { Renderer } from "./renderer";
+import { play } from "./audio";
 
-const TICK_MS = 1000 / TICKS_PER_SECOND;
+/**
+ * Wall-clock milliseconds per sim tick.
+ *
+ * This is where the global 2x lives. The sim's tick rate is still a fixed 30Hz
+ * and every stat in it is still denominated in ticks; the driver simply drains
+ * GAME_SPEED_MULTIPLIER ticks per 1/30s of real time. Nothing inside the sim
+ * knows, determinism is untouched, and a replay recorded at one speed
+ * reproduces byte-identically at another.
+ */
+const TICK_MS = 1000 / (TICKS_PER_SECOND * GAME_SPEED_MULTIPLIER);
 /** If the tab was backgrounded, resume — don't simulate the missing minutes. */
 const MAX_FRAME_MS = 250;
 const MESSAGE_MS = 1800;
@@ -42,6 +57,29 @@ export type HudTower = {
   blocking: number;
   sellValue: number;
   canMerge: boolean;
+  /** Has a legal merge partner on the board right now. Drives the tile badge. */
+  hasPartner: boolean;
+};
+
+/**
+ * One roster slot, as the upgrade row needs it.
+ *
+ * "Family" here means the tower TYPE — the brief's sense, one per roster slot.
+ * `upgradable` is false for the pure-control towers, which have no damage
+ * number for the bonus to scale: the button is shown but visibly inert rather
+ * than charging for nothing.
+ */
+export type HudFamily = {
+  towerId: TowerId;
+  icon: string;
+  family: string;
+  level: number;
+  maxLevel: number;
+  cost: number;
+  affordable: boolean;
+  upgradable: boolean;
+  /** Towers of this type on the board right now. Nothing to multiply at zero. */
+  onBoard: number;
 };
 
 export type Hud = {
@@ -50,9 +88,9 @@ export type Hud = {
   summonCost: number;
   canAfford: boolean;
   lives: number;
+  maxLives: number;
   wave: number;
   waveCount: number;
-  prepSeconds: number;
   score: number;
   kills: number;
   leaks: number;
@@ -60,18 +98,54 @@ export type Hud = {
   towers: HudTower[];
   /** Ids the currently selected tower may merge with. Drives the highlight. */
   partners: number[];
+  /** Every tower with a partner, whether or not anything is selected. */
+  mergeableIds: number[];
+  /** How many merges could be performed right now. Zero hides the counter. */
+  mergesAvailable: number;
+  /** The five roster slots, with their upgrade state. */
+  families: HudFamily[];
 };
 
+/**
+ * Merge availability, computed once per snapshot rather than per tower.
+ *
+ * A "merge available" is a PAIR, so three identical tier-1 towers are one
+ * merge, not three. Counting partners instead would tell the player they have
+ * more moves than they do.
+ */
+function mergeability(s: GameState): { ids: number[]; count: number } {
+  const groups = new Map<string, number[]>();
+  for (const t of s.towers) {
+    if (t.tier >= MAX_TIER) continue;
+    const key = `${t.towerId}:${t.tier}`;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(t.id);
+    else groups.set(key, [t.id]);
+  }
+
+  const ids: number[] = [];
+  let count = 0;
+  // Iterated in insertion order, which is tower order — this is render-side, so
+  // it only has to be stable, not part of the replay contract.
+  for (const bucket of groups.values()) {
+    if (bucket.length < 2) continue;
+    ids.push(...bucket);
+    count += Math.floor(bucket.length / 2);
+  }
+  return { ids, count };
+}
+
 function toHud(s: GameState, selectedId: number | null): Hud {
+  const { ids: mergeableIds, count: mergesAvailable } = mergeability(s);
   return {
     status: s.status,
     mana: s.mana,
     summonCost: s.summonCost,
     canAfford: s.mana >= s.summonCost,
     lives: s.lives,
+    maxLives: MAX_LIVES,
     wave: Math.min(s.waveIndex + 1, s.level.waves.length),
     waveCount: s.level.waves.length,
-    prepSeconds: s.status === "prep" ? Math.ceil(s.prepRemaining / TICKS_PER_SECOND) : 0,
     score: s.score,
     kills: s.kills,
     leaks: s.leaks,
@@ -91,9 +165,28 @@ function toHud(s: GameState, selectedId: number | null): Hud {
         blocking: t.blocking.length,
         sellValue: Math.floor((t.invested * SELL_REFUND_PCT) / 100),
         canMerge: t.tier < MAX_TIER,
+        hasPartner: mergeableIds.includes(t.id),
       };
     }),
     partners: selectedId === null ? [] : mergePartners(s, selectedId),
+    mergeableIds,
+    mergesAvailable,
+    families: s.roster.map((id) => {
+      const level = s.familyUpgradeLevels[id] ?? 0;
+      const maxed = level >= FAMILY_UPGRADE_MAX_LEVEL;
+      const cost = familyUpgradeCost(level);
+      return {
+        towerId: id,
+        icon: towerSpec(id).icon,
+        family: towerSpec(id).family,
+        level,
+        maxLevel: FAMILY_UPGRADE_MAX_LEVEL,
+        cost,
+        affordable: s.mana >= cost,
+        upgradable: hasDamageAxis(id) && !maxed,
+        onBoard: s.towers.filter((t) => t.towerId === id).length,
+      };
+    }),
   };
 }
 
@@ -108,6 +201,13 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
   const hudJsonRef = useRef<string>("");
   const floatersRef = useRef<{ amount: number; x: number; y: number; age: number; life: number }[]>([]);
   const selectedRef = useRef<number | null>(null);
+  /**
+   * Merges we asked for, oldest first. The sim's `merged` event says what the
+   * result rolled into but not which two towers made it, and the render needs
+   * both source positions to converge them. Pairing our own requests with the
+   * events they produced is cheaper than widening the event.
+   */
+  const mergeQueueRef = useRef<{ sourceId: number; targetId: number }[]>([]);
 
   const [hud, setHud] = useState<Hud | null>(null);
   const [selectedTowerId, setSelectedTowerId] = useState<number | null>(null);
@@ -126,6 +226,7 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
     prevRef.current = fresh;
     pendingRef.current = [];
     floatersRef.current = [];
+    mergeQueueRef.current = [];
     hudJsonRef.current = "";
     setRoster(chosen);
     setSelectedTowerId(null);
@@ -200,17 +301,57 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
         pendingRef.current = [];
         acc -= TICK_MS;
 
+        const before = prevRef.current!;
+        const after = stateRef.current!;
+
+        // A leak is the single most important event in the game and it used to
+        // be invisible. The bar shakes and shatters on its own (LivesBar reads
+        // the number); the cue is fired here so it happens once per tick that
+        // cost lives, not once per re-render.
+        if (after.lives < before.lives) {
+          play(after.lives <= 0 ? "leak_fatal" : "leak");
+        }
+
         // Bounty floaters are collected per drained tick, so a slow frame that
         // advances the sim twice never swallows one.
-        for (const ev of stateRef.current.events) {
+        for (const ev of after.events) {
           if (ev.kind === "bounty") {
             floatersRef.current.push({ amount: ev.amount, x: ev.x, y: ev.y, age: 0, life: 1.4 });
+          } else if (ev.kind === "wave_start") {
+            // With no break to mark it, the wave boundary needs its own
+            // signalling or it passes unnoticed: the counter pops (Hud), the
+            // spawn edge sweeps (Renderer), and this is the cue.
+            play("wave");
+            rendererRef.current?.playWaveStart();
+          } else if (ev.kind === "family_upgraded") {
+            // Every tower of the family pulses at once. Without the board-wide
+            // reaction this is indistinguishable from upgrading one tower.
+            play("upgrade");
+            rendererRef.current?.playFamilyPulse(ev.towerId);
+          } else if (ev.kind === "summoned") {
+            play("summon");
+          } else if (ev.kind === "merged") {
+            const pair = mergeQueueRef.current.shift();
+            const source = pair && before.towers.find((t) => t.id === pair.sourceId);
+            const target = pair && before.towers.find((t) => t.id === pair.targetId);
+            if (source && target) {
+              rendererRef.current?.playMerge({
+                fromX: source.x,
+                fromY: source.y,
+                toX: target.x,
+                toY: target.y,
+                icon: towerSpec(ev.towerId).icon,
+                tier: ev.tier,
+              });
+            }
+            play("merge");
           }
         }
 
-        const noRoom = stateRef.current.events.find((e) => e.kind === "no_room");
+        const noRoom = after.events.find((e) => e.kind === "no_room");
         if (noRoom && noRoom.kind === "no_room") {
-          setMessage(`No room for ${towerSpec(noRoom.towerId).name} — sell something`);
+          play("denied");
+          setMessage(`${towerSpec(noRoom.towerId).icon}🚫`);
           if (messageTimer) clearTimeout(messageTimer);
           messageTimer = setTimeout(() => setMessage(null), MESSAGE_MS);
         }
@@ -227,6 +368,7 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
 
       const next = toHud(stateRef.current!, selectedRef.current);
       rendererRef.current?.setPartners(next.partners);
+      rendererRef.current?.setMergeable(next.mergeableIds);
       const json = JSON.stringify(next);
       if (json !== hudJsonRef.current) {
         hudJsonRef.current = json;
@@ -262,6 +404,7 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
       const selected = selectedRef.current;
       if (selected !== null && selected !== towerId) {
         if (mergePartners(s, selected).includes(towerId)) {
+          mergeQueueRef.current.push({ sourceId: selected, targetId: towerId });
           enqueue((t) => ({
             tick: t,
             kind: "merge",
@@ -272,6 +415,13 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
         }
       }
       setSelectedTowerId((cur) => (cur === towerId ? null : towerId));
+    },
+    [enqueue],
+  );
+
+  const upgradeFamily = useCallback(
+    (towerId: TowerId) => {
+      enqueue((t) => ({ tick: t, kind: "family_upgrade", payload: { towerId } }));
     },
     [enqueue],
   );
@@ -295,5 +445,6 @@ export function useGame(host: React.RefObject<HTMLDivElement | null>) {
     summon,
     tapTower,
     sellSelected,
+    upgradeFamily,
   };
 }

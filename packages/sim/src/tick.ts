@@ -14,13 +14,16 @@
  * documented there. Nothing in this file consumes randomness.
  */
 
-import { SCORE_PER_LIFE, SCORE_PER_WAVE, START_LIVES } from "./content.js";
+import { MAX_LIVES, SCORE_PER_LIFE, SCORE_PER_WAVE, leakDamageFor, spawnIntervalFor } from "./content.js";
 import {
+  FAMILY_UPGRADE_MAX_LEVEL,
   MANA_REGEN_AMOUNT,
   MANA_REGEN_INTERVAL,
   SELL_REFUND_PCT,
   STARTING_MANA,
   bountyFor,
+  familyDamagePct,
+  familyUpgradeCost,
   summonCostFor,
 } from "./economy.js";
 import { ENEMY_SPECS, effectiveDamage } from "./enemies.js";
@@ -30,7 +33,10 @@ import { buildPath, nearestLaneDistance, posAt, tileCentre, type PathGeometry } 
 import { cloneRng, seedRng } from "./rng.js";
 import { applyStatus, expireStatuses, hasStatus, magnitudeOf } from "./status.js";
 import { trySummon } from "./summon.js";
-import { atTier, rangeAtTier, towerSpec, type ShotEffect, type StatusApplyEffect } from "./towers.js";
+import {
+  atTier, hasDamageAxis, rangeAtTier, towerSpec,
+  type ShotEffect, type StatusApplyEffect,
+} from "./towers.js";
 import type {
   Enemy, GameState, Input, LevelDef, Projectile, Tower, TowerId, WaveScaling,
 } from "./types.js";
@@ -50,16 +56,20 @@ export function createInitialState(level: LevelDef, roster: TowerId[]): GameStat
     rng: seedRng(level.seed),
     level,
     roster: roster.slice(),
-    status: "prep",
+    // Wave 1 is already running at tick 0. There is no opening pause: the
+    // break phase is gone and its lead-in lives in each group's startTick.
+    status: "wave",
     mana: STARTING_MANA,
     manaFromTick: 0,
     manaFromKills: 0,
     summonCost: summonCostFor(0),
     summonsUsed: 0,
-    lives: START_LIVES,
+    // One entry per roster slot, in roster order. Nothing outside the roster
+    // can ever be summoned or rolled into, so nothing else needs a key.
+    familyUpgradeLevels: Object.fromEntries(roster.map((id) => [id, 0])),
+    lives: MAX_LIVES,
     waveIndex: 0,
     waveTick: 0,
-    prepRemaining: first ? first.prepTicks : 0,
     spawnCursors: first ? first.spawns.map(() => 0) : [],
     enemies: [],
     towers: [],
@@ -84,10 +94,12 @@ function cloneState(s: GameState): GameState {
     manaFromKills: s.manaFromKills,
     summonCost: s.summonCost,
     summonsUsed: s.summonsUsed,
+    // Spread preserves insertion order, so the serialized order — and the
+    // fixture hash — does not depend on how the record was built.
+    familyUpgradeLevels: { ...s.familyUpgradeLevels },
     lives: s.lives,
     waveIndex: s.waveIndex,
     waveTick: s.waveTick,
-    prepRemaining: s.prepRemaining,
     spawnCursors: s.spawnCursors.slice(),
     enemies: s.enemies.map((e) => ({
       ...e,
@@ -149,12 +161,53 @@ function applyInputs(s: GameState, inputs: Input[], path: PathGeometry): void {
       case "sell":
         sellTower(s, input.payload.towerId);
         break;
+      case "family_upgrade":
+        tryFamilyUpgrade(s, input.payload.towerId);
+        break;
       case "ability":
         // No abilities in M0. The kind exists because §6 defines it and the
         // replay format should not change when one is added.
         break;
     }
   }
+}
+
+/**
+ * Raise one family's upgrade level. Every check is a no-op rather than an
+ * error, exactly like an unaffordable summon: an input the sim will not honour
+ * must cost nothing, or the same replay would diverge.
+ *
+ * Consumes no RNG. The draw order documented in summon.ts and merge.ts is
+ * unaffected by this input existing.
+ */
+function tryFamilyUpgrade(s: GameState, family: TowerId): void {
+  const level = s.familyUpgradeLevels[family];
+  if (level === undefined) return; // not in this run's roster
+  if (level >= FAMILY_UPGRADE_MAX_LEVEL) return;
+  // Refuse rather than charge for nothing: pure-control towers have no damage
+  // number for the upgrade to scale. See hasDamageAxis.
+  if (!hasDamageAxis(family)) return;
+
+  const cost = familyUpgradeCost(level);
+  if (s.mana < cost) return;
+
+  s.mana -= cost;
+  s.familyUpgradeLevels[family] = level + 1;
+  s.events.push({ kind: "family_upgraded", towerId: family, level: level + 1 });
+}
+
+/**
+ * Damage for one tower, tier and family upgrade applied in that order.
+ *
+ * Every damage number in the sim goes through here. A merged tower re-rolls
+ * its type, so it reads the level of the family it BECAME — which is looked up
+ * from `towerId` at the moment of the hit, not cached on the tower.
+ */
+function towerDamage(s: GameState, towerId: TowerId, base: number, tier: number): number {
+  const scaled = atTier(base, tier);
+  const level = s.familyUpgradeLevels[towerId] ?? 0;
+  if (level === 0) return scaled;
+  return Math.floor((scaled * familyDamagePct(level)) / 100);
 }
 
 function sellTower(s: GameState, towerId: number): void {
@@ -177,32 +230,46 @@ function regenMana(s: GameState): void {
 }
 
 /**
- * Waves auto-advance. With time-regenerating mana a manual start button would
- * let the player idle and bank unlimited mana, which is exactly the tension the
- * mana model exists to create.
+ * Waves run continuously. There is no break, no prep phase and no start button:
+ * wave N+1 begins spawning the tick wave N finishes spawning, so enemies from
+ * two waves can be walking the lane at once.
+ *
+ * Two reasons, in order. The playtest asked for a faster game and the breaks
+ * were dead air. And with time-regenerating mana, any pause the player controls
+ * lets them idle and bank, which is exactly the tension the mana model exists
+ * to create.
+ *
+ * The wave counter advances on SPAWN completion, not on a clear. Waiting for a
+ * clear would reintroduce the pause by the back door — the board would idle
+ * while the last straggler walked.
  */
 function advanceWaves(s: GameState, path: PathGeometry): void {
-  if (s.status === "prep") {
-    s.prepRemaining -= 1;
-    if (s.prepRemaining > 0) return;
-    s.status = "wave";
-    s.waveTick = 0;
-    return;
-  }
-
   s.waveTick += 1;
   const wave = s.level.waves[s.waveIndex];
   if (!wave) return;
 
   for (let i = 0; i < wave.spawns.length; i++) {
     const group = wave.spawns[i];
+    const interval = spawnIntervalFor(group.intervalTicks);
     while (s.spawnCursors[i] < group.count) {
-      const due = group.startTick + s.spawnCursors[i] * group.intervalTicks;
+      const due = group.startTick + s.spawnCursors[i] * interval;
       if (s.waveTick < due) break;
       s.enemies.push(makeEnemy(s, group.kind, path, wave.scaling));
       s.spawnCursors[i] += 1;
     }
   }
+
+  const allSpawned = wave.spawns.every((g, i) => s.spawnCursors[i] >= g.count);
+  if (!allSpawned) return;
+
+  // Wave sent in full: score it and hand straight over to the next one.
+  s.score += SCORE_PER_WAVE;
+  s.waveIndex += 1;
+  s.waveTick = 0;
+
+  const next = s.level.waves[s.waveIndex];
+  s.spawnCursors = next ? next.spawns.map(() => 0) : [];
+  if (next) s.events.push({ kind: "wave_start", wave: s.waveIndex + 1 });
 }
 
 function makeEnemy(
@@ -333,7 +400,7 @@ function moveEnemies(s: GameState, path: PathGeometry): void {
     if (e.dist >= path.total) {
       e.alive = false;
       s.leaks += 1;
-      s.lives -= ENEMY_SPECS[e.kind].leak;
+      s.lives -= leakDamageFor(e.kind);
       continue;
     }
     const at = posAt(path, e.dist);
@@ -367,7 +434,7 @@ function resolveMelee(s: GameState): void {
     } else if (t.blocking.length > 0) {
       const victim = findEnemy(s, t.blocking[0]);
       if (victim) {
-        damageEnemy(s, victim, atTier(effect.attackDamage, t.tier));
+        damageEnemy(s, victim, towerDamage(s, t.towerId, effect.attackDamage, t.tier));
         t.cooldown = effect.attackCooldown;
       }
     }
@@ -396,7 +463,7 @@ function resolveMelee(s: GameState): void {
       for (const e of s.enemies) {
         if (!e.alive) continue;
         if (dist2(t.x, t.y, e.x, e.y) > r2) continue;
-        damageEnemy(s, e, atTier(effect.deathDamage, t.tier));
+        damageEnemy(s, e, towerDamage(s, t.towerId, effect.deathDamage, t.tier));
         if (e.alive && effect.deathStunTicks > 0) {
           applyStatus(
             e.statuses,
@@ -487,7 +554,7 @@ function fireShot(s: GameState, t: Tower, effect: ShotEffect, candidates: Enemy[
     tx: target.x,
     ty: target.y,
     targetId: target.id,
-    damage: atTier(effect.damage, t.tier),
+    damage: towerDamage(s, t.towerId, effect.damage, t.tier),
     speed: effect.projectileSpeed,
     splash: effect.splash,
     hopsLeft,
@@ -515,17 +582,27 @@ function applyStatusEffect(
           .slice(0, effect.maxTargets);
 
   for (const e of targets) {
+    // Poison magnitude IS damage — it is the one status that deals it, and it
+    // is what a Venom family upgrade buys. Slow, vulnerable and armour shred
+    // are control, so they scale with tier only.
+    const magnitude =
+      effect.status === "poison"
+        ? towerDamage(s, t.towerId, effect.magnitude, t.tier)
+        : atTier(effect.magnitude, t.tier);
+
     applyStatus(
       e.statuses,
       {
         kind: effect.status,
-        magnitude: atTier(effect.magnitude, t.tier),
+        magnitude,
         remainingTicks: effect.durationTicks,
         sourceId: t.towerId,
       },
       ENEMY_SPECS[e.kind].armor,
     );
-    if (effect.damage > 0) damageEnemy(s, e, atTier(effect.damage, t.tier));
+    if (effect.damage > 0) {
+      damageEnemy(s, e, towerDamage(s, t.towerId, effect.damage, t.tier));
+    }
   }
   t.cooldown = effect.cooldown;
 }
@@ -622,24 +699,11 @@ function resolveRunState(s: GameState): void {
   }
   if (s.status !== "wave") return;
 
-  const wave = s.level.waves[s.waveIndex];
-  if (!wave) return;
+  // Wave advancement happens in advanceWaves, on spawn completion. All that is
+  // left to decide here is whether the level has run out of waves AND the board
+  // has emptied — the last stragglers still have to be dealt with.
+  if (s.waveIndex < s.level.waves.length || s.enemies.length > 0) return;
 
-  const allSpawned = wave.spawns.every((g, i) => s.spawnCursors[i] >= g.count);
-  if (!allSpawned || s.enemies.length > 0) return;
-
-  s.score += SCORE_PER_WAVE;
-  s.waveIndex += 1;
-  s.waveTick = 0;
-
-  const next = s.level.waves[s.waveIndex];
-  if (!next) {
-    s.status = "won";
-    s.score += s.lives * SCORE_PER_LIFE;
-    s.spawnCursors = [];
-    return;
-  }
-  s.status = "prep";
-  s.prepRemaining = next.prepTicks;
-  s.spawnCursors = next.spawns.map(() => 0);
+  s.status = "won";
+  s.score += s.lives * SCORE_PER_LIFE;
 }

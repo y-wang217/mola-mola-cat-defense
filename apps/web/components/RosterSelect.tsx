@@ -6,6 +6,11 @@
  * This is where the strategy lives. Placement and type are random once the run
  * starts, so choosing these five is the player's real decision — and the five
  * are the entire draw pool, which is why they stay on screen during the run.
+ *
+ * This screen is the one place prose survives the language cull. It is a
+ * deliberation screen, not a HUD: nothing is moving, the player is reading to
+ * decide, and a tower's blurb is the only thing distinguishing two glyphs from
+ * the same family. Everything here is 16px or larger.
  */
 
 import { useState } from "react";
@@ -14,10 +19,12 @@ import type { TowerId } from "@siege/sim";
 
 const FAMILY_ORDER = ["projectile", "melee", "status"] as const;
 
-const FAMILY_LABEL: Record<string, string> = {
-  projectile: "Projectile · platform tiles",
-  melee: "Melee · lane tiles, blocks",
-  status: "Status · platform tiles, no damage",
+/** Glyph plus the family word. The old labels spelled out the tile rule too;
+ *  the tile rule is visible on the board and did not need saying twice. */
+const FAMILY_GLYPH: Record<string, string> = {
+  projectile: "🎯",
+  melee: "🛡️",
+  status: "🧪",
 };
 
 const FAMILY_ACCENT: Record<string, string> = {
@@ -54,18 +61,17 @@ export default function RosterSelect({
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-3">
       <header className="shrink-0">
-        <h1 className="text-xl font-semibold">Choose your roster</h1>
-        <p className="mt-1 text-sm leading-snug text-slate-400">
-          Pick {ROSTER_SIZE}. Every summon and every merge draws at random from
-          these five — so this is the strategy, and the odds are yours to set.
+        <h1 className="text-xl font-bold">Pick {ROSTER_SIZE}</h1>
+        <p className="mt-1 text-base leading-snug text-slate-300">
+          Every summon and every merge draws at random from these five.
         </p>
       </header>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
         {FAMILY_ORDER.map((family) => (
           <section key={family}>
-            <h2 className="mb-1.5 text-[11px] uppercase tracking-wider text-slate-500">
-              {FAMILY_LABEL[family]}
+            <h2 className="mb-1.5 text-base font-semibold text-slate-300">
+              <span aria-hidden>{FAMILY_GLYPH[family]}</span> {family}
             </h2>
             <div className="grid grid-cols-2 gap-2">
               {TOWER_POOL.filter((t) => t.family === family).map((t) => {
@@ -77,13 +83,15 @@ export default function RosterSelect({
                     onClick={() => toggle(t.id)}
                     aria-pressed={on}
                     className={[
-                      "rounded-lg border px-3 py-2 text-left transition",
+                      "min-h-[44px] rounded-lg border px-3 py-2 text-left transition",
                       on ? FAMILY_ACCENT[family] : "border-slate-700 bg-slate-900",
                       blocked ? "opacity-40" : "",
                     ].join(" ")}
                   >
-                    <span className="block text-sm font-semibold">{t.name}</span>
-                    <span className="mt-0.5 block text-[11px] leading-snug text-slate-400">
+                    <span className="block text-base font-semibold">
+                      <span aria-hidden>{t.icon}</span> {t.name}
+                    </span>
+                    <span className="mt-0.5 block text-base leading-snug text-slate-300">
                       {t.blurb}
                     </span>
                   </button>
@@ -95,15 +103,21 @@ export default function RosterSelect({
       </div>
 
       <footer className="shrink-0 space-y-2">
-        <p className="text-center text-xs text-slate-500">
-          {counts.map((c) => `${c.n} ${c.family}`).join(" · ")}
+        <p className="num flex justify-center gap-4 text-base text-slate-300">
+          {counts.map((c) => (
+            <span key={c.family}>
+              <span aria-hidden>{FAMILY_GLYPH[c.family]}</span>
+              {c.n}
+            </span>
+          ))}
         </p>
         <button
           disabled={!full}
           onClick={() => onStart(picked)}
-          className="w-full rounded-lg bg-emerald-500 px-4 py-3.5 text-base font-semibold text-slate-950 disabled:bg-slate-800 disabled:text-slate-500"
+          aria-label={full ? "begin run" : `${picked.length} of ${ROSTER_SIZE} picked`}
+          className="num min-h-[56px] w-full rounded-lg bg-emerald-500 px-4 text-2xl font-bold text-slate-950 disabled:bg-slate-800 disabled:text-slate-500"
         >
-          {full ? "Begin run" : `Pick ${ROSTER_SIZE - picked.length} more`}
+          {full ? "▶" : `${picked.length}/${ROSTER_SIZE}`}
         </button>
       </footer>
     </div>

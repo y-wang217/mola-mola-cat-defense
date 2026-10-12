@@ -15,3 +15,103 @@ body {
 button {
   touch-action: manipulation;
 }
+
+/*
+ * Numbers that change during play (mana, wave, lives, costs) must not jitter.
+ * Tabular figures keep every digit the same width so a counter ticking from 9
+ * to 10 does not shove the layout sideways.
+ */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* --- life-segment feedback (see LivesBar.tsx) --------------------------- */
+
+@keyframes life-shatter {
+  0% {
+    opacity: 1;
+    transform: scaleY(1.35);
+    filter: brightness(2.2);
+  }
+  35% {
+    opacity: 1;
+    transform: scaleY(0.5) skewX(18deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleY(0.1) skewX(-24deg);
+  }
+}
+
+@keyframes bar-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15% {
+    transform: translateX(-5px);
+  }
+  30% {
+    transform: translateX(5px);
+  }
+  45% {
+    transform: translateX(-3px);
+  }
+  60% {
+    transform: translateX(3px);
+  }
+  80% {
+    transform: translateX(-1px);
+  }
+}
+
+@keyframes life-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgb(248 113 113 / 0.7);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 4px rgb(248 113 113 / 0);
+  }
+}
+
+@keyframes count-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.45);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-life-shatter {
+  animation: life-shatter 620ms ease-out forwards;
+}
+
+.animate-bar-shake {
+  animation: bar-shake 380ms ease-out;
+}
+
+.animate-life-pulse {
+  animation: life-pulse 900ms ease-in-out infinite;
+}
+
+.animate-count-pop {
+  animation: count-pop 420ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-life-shatter,
+  .animate-bar-shake,
+  .animate-life-pulse,
+  .animate-count-pop {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
+  }
+}

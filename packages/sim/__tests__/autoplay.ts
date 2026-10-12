@@ -11,12 +11,29 @@
 
 import { createInitialState, tick } from "../src/tick.js";
 import { mergePartners } from "../src/merge.js";
-import { towerSpec } from "../src/towers.js";
+import { FAMILY_UPGRADE_MAX_LEVEL, familyUpgradeCost } from "../src/economy.js";
+import { legalTileIndices } from "../src/summon.js";
+import { hasDamageAxis, towerSpec } from "../src/towers.js";
 import type { GameState, Input, LevelDef, TowerId } from "../src/types.js";
 
 export type Policy = {
   /** Merge whenever a legal pair exists. Off = hoard, which tests the other side. */
   merge: boolean;
+  /**
+   * Merge only once the tile class has no free tile left.
+   *
+   * This is the difference between competent and careless play, and it is a
+   * bigger difference than it looks. Tier 2 is 145% of tier 1, so merging two
+   * tier-1 towers while a free tile exists trades 200% of a family's output for
+   * 145% — a loss. Merging is for when the board is out of room, or when the
+   * re-roll is worth gambling on.
+   *
+   * Measured on the M0.1 level: patient merging clears with every roster tried;
+   * greedy merging loses four of ten, at waves 5, 8 and 11. Both are useful —
+   * the first is the "reasonable play" baseline the difficulty is authored
+   * against, the second is the "genuinely bad play" baseline.
+   */
+  mergeOnlyWhenFull: boolean;
   /** Sell the weakest tower when the board is full and mana is piling up. */
   sellWhenFull: boolean;
   /**
@@ -28,11 +45,25 @@ export type Policy = {
   summonFromTick: number;
   /** Stop summoning after this many. Models a player who does almost nothing. */
   maxSummons: number;
+  /**
+   * Once the board holds at least this many towers, spend on family upgrades
+   * before summoning. Infinity models a player who ignores the sink entirely,
+   * which is the baseline every other suite measures against.
+   */
+  upgradeFromTowers: number;
 };
 
 export const DEFAULT_POLICY: Policy = {
-  merge: true, sellWhenFull: true, summonFromTick: 0, maxSummons: Number.MAX_SAFE_INTEGER,
+  merge: true, mergeOnlyWhenFull: true, sellWhenFull: true,
+  summonFromTick: 0, maxSummons: Number.MAX_SAFE_INTEGER,
+  upgradeFromTowers: Number.POSITIVE_INFINITY,
 };
+
+/** Spends on family upgrades once the board is established. */
+export const UPGRADER: Policy = { ...DEFAULT_POLICY, upgradeFromTowers: 8 };
+
+/** Careless play: merge the instant a pair exists, which shrinks the board. */
+export const GREEDY_MERGE: Policy = { ...DEFAULT_POLICY, mergeOnlyWhenFull: false };
 
 export type PlayResult = {
   final: GameState;
@@ -42,6 +73,7 @@ export type PlayResult = {
   merges: number;
   sells: number;
   noRoom: number;
+  upgrades: number;
 };
 
 export function autoplay(
@@ -59,6 +91,7 @@ export function autoplay(
   let merges = 0;
   let sells = 0;
   let noRoom = 0;
+  let upgrades = 0;
 
   while (s.status !== "won" && s.status !== "lost" && ticks < maxTicks) {
     if (until && until(s)) break;
@@ -67,15 +100,30 @@ export function autoplay(
     if (policy.merge) {
       for (const t of s.towers) {
         const partners = mergePartners(s, t.id);
-        if (partners.length > 0) {
-          inputs.push({
-            tick: s.tick,
-            kind: "merge",
-            payload: { sourceId: partners[0], targetId: t.id },
-          });
-          merges++;
-          break;
+        if (partners.length === 0) continue;
+        if (
+          policy.mergeOnlyWhenFull &&
+          legalTileIndices(s, towerSpec(t.towerId).tileClass).length > 0
+        ) {
+          continue;
         }
+        inputs.push({
+          tick: s.tick,
+          kind: "merge",
+          payload: { sourceId: partners[0], targetId: t.id },
+        });
+        merges++;
+        break;
+      }
+    }
+
+    // Upgrades come before the summon, because the two compete for the same
+    // mana and whichever is asked for first wins the tick.
+    if (s.towers.length >= policy.upgradeFromTowers) {
+      const target = bestUpgrade(s);
+      if (target && s.mana >= familyUpgradeCost(s.familyUpgradeLevels[target])) {
+        inputs.push({ tick: s.tick, kind: "family_upgrade", payload: { towerId: target } });
+        upgrades++;
       }
     }
 
@@ -102,7 +150,27 @@ export function autoplay(
     ticks++;
   }
 
-  return { final: s, inputLog, ticks, summons, merges, sells, noRoom };
+  return { final: s, inputLog, ticks, summons, merges, sells, noRoom, upgrades };
+}
+
+/**
+ * The family with the most towers on the board that could still be upgraded.
+ * Concentrating beats spreading under an escalating cost only when the board
+ * actually holds that family, which is what makes the choice interesting.
+ */
+function bestUpgrade(s: GameState): TowerId | undefined {
+  let best: TowerId | undefined;
+  let bestCount = 0;
+  for (const id of s.roster) {
+    if (!hasDamageAxis(id)) continue;
+    if (s.familyUpgradeLevels[id] >= FAMILY_UPGRADE_MAX_LEVEL) continue;
+    const count = s.towers.filter((t) => t.towerId === id).length;
+    if (count > bestCount) {
+      bestCount = count;
+      best = id;
+    }
+  }
+  return bestCount > 0 ? best : undefined;
 }
 
 /** Replay a recorded input log from a fresh initial state. */
@@ -160,16 +228,23 @@ export const STATUS_HEAVY: TowerId[] = ["frost", "venom", "hex", "rasp", "bulwar
  * no decisions from state beyond legality, so the input log is stable and the
  * only thing that can change its hash is the sim itself.
  *
- * The roster is status-heavy on purpose. Status towers occupy platform tiles
- * and never die, so the 14 platforms fill and stay filled — after which further
- * platform draws fail with `no_room`, which is one of the cases §8 requires the
- * fixture to cover. A melee-heavy roster cannot do this reliably: blockers die
- * during waves and keep freeing their lane tiles.
+ * Every entry is PLATFORM class on purpose, so every draw competes for the same
+ * 14 tiles: they fill, they stay filled because nothing on a platform can die,
+ * and the next summon fails with `no_room` — one of the cases §8 requires the
+ * fixture to cover. A roster with a blocker in it cannot do this reliably,
+ * because blockers die during waves and keep freeing their lane tiles.
+ *
+ * It was status-heavy before the tempo patch, where the same trick worked
+ * because runs were long enough to reach 14 summons. On the ten-wave curve a
+ * board with no damage in it dies around wave 7, well before the platforms are
+ * full, so two projectile towers are in the roster to keep the run alive long
+ * enough to exercise the case. The summon cadence and the scripted merge and
+ * sell ticks moved inside the shorter window for the same reason.
  *
  * Counts come from emitted events, not from intent, so a summon that the sim
  * rejected is never counted as one that happened.
  */
-export const GOLDEN_ROSTER: TowerId[] = ["frost", "venom", "hex", "rasp", "bulwark"];
+export const GOLDEN_ROSTER: TowerId[] = ["arrow", "mortar", "frost", "venom", "hex"];
 export const GOLDEN_TICKS = 7200;
 
 export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: number) {
@@ -181,15 +256,27 @@ export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: numb
   let noRoom = 0;
   let sold = false;
   let ticks = 0;
+  let upgrades = 0;
 
   for (let i = 0; i < totalTicks; i++) {
     if (s.status === "won" || s.status === "lost") break;
     const inputs: Input[] = [];
 
-    if (s.tick % 40 === 0 && s.mana >= s.summonCost) {
+    // Family upgrades go in FIRST, before the summon, because the two compete
+    // for the same mana and the ordering decides which one wins on a tick where
+    // both are asked for. Two land on a family with a damage axis; the third is
+    // aimed at a pure-control family and the sim must refuse it without taking
+    // the mana. All three paths belong in the fixture.
+    if (s.tick === 900 || s.tick === 3000 || s.tick === 3600) {
+      inputs.push({ tick: s.tick, kind: "family_upgrade", payload: { towerId: "arrow" } });
+    }
+    if (s.tick === 3300) {
+      inputs.push({ tick: s.tick, kind: "family_upgrade", payload: { towerId: "frost" } });
+    }
+    if (s.tick % 25 === 0 && s.mana >= s.summonCost) {
       inputs.push({ tick: s.tick, kind: "summon", payload: {} });
     }
-    if ((s.tick === 2000 || s.tick === 3400) && s.towers.length > 1) {
+    if ((s.tick === 1200 || s.tick === 2200) && s.towers.length > 1) {
       for (const t of s.towers) {
         const partners = mergePartners(s, t.id);
         if (partners.length > 0) {
@@ -198,7 +285,7 @@ export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: numb
         }
       }
     }
-    if (!sold && s.tick === 2600 && s.towers.length > 0) {
+    if (!sold && s.tick === 1600 && s.towers.length > 0) {
       inputs.push({ tick: s.tick, kind: "sell", payload: { towerId: s.towers[0].id } });
       sells++;
       sold = true;
@@ -212,8 +299,9 @@ export function scriptedRun(level: LevelDef, roster: TowerId[], totalTicks: numb
       if (e.kind === "summoned") summons++;
       else if (e.kind === "no_room") noRoom++;
       else if (e.kind === "merged") merges++;
+      else if (e.kind === "family_upgraded") upgrades++;
     }
   }
 
-  return { final: s, inputLog, ticks, summons, merges, sells, noRoom };
+  return { final: s, inputLog, ticks, summons, merges, sells, noRoom, upgrades };
 }

@@ -1,10 +1,17 @@
 /**
  * The single hardcoded M0 board.
  *
- * Deliberately tight: 5 lane tiles and 14 platforms. A sprawling board makes
- * random placement feel weightless — when almost every tile is free, where the
- * summon lands stops mattering. Small boards make each summon a real event and
- * make selling a real decision.
+ * 9 wide by 12 tall, portrait, square cells. The playtest called the old
+ * 9x16 board unreadable on a phone: the cells were the same shape, but there
+ * were 144 of them and the board was letterboxed by its height, so a tile came
+ * out around 37 CSS px and the tower glyph inside it around 26. At 12 rows the
+ * board is width-bound instead, the tile lands near 42px and the glyph clears
+ * the 28px floor.
+ *
+ * Deliberately tight: 5 lane tiles and 14 platforms, unchanged in count from
+ * the 9x16 board. A sprawling board makes random placement feel weightless —
+ * when almost every tile is free, where the summon lands stops mattering. Small
+ * boards make each summon a real event and make selling a real decision.
  *
  * The five lane tiles are spread along the run so blockers stagger rather than
  * stacking into one chokepoint.
@@ -14,27 +21,34 @@ import { buildPath, pathDistanceAt, tileCentre } from "./pathing.js";
 import type { GridPos, LevelDef, Terrain, Tile } from "./types.js";
 
 const WIDTH = 9;
-const HEIGHT = 16;
+const HEIGHT = 12;
 
-// Enters off the top, exits off the bottom. Axis-aligned so lengths are exact.
+/**
+ * Enters off the top, exits off the bottom. Axis-aligned so lengths are exact.
+ *
+ * Re-authored for the smaller grid and kept in character: still a serpentine,
+ * still six turns, still entering at column 1 and leaving at column 7. It is 31
+ * tiles long against the old 35 — the shortest the character survives at this
+ * height — so enemies reach the end about 11% sooner at the same speed.
+ */
 const PATH: GridPos[] = [
   { x: 1, y: -1 },
-  { x: 1, y: 3 },
-  { x: 7, y: 3 },
-  { x: 7, y: 7 },
-  { x: 1, y: 7 },
-  { x: 1, y: 11 },
-  { x: 7, y: 11 },
-  { x: 7, y: 16 },
+  { x: 1, y: 2 },
+  { x: 7, y: 2 },
+  { x: 7, y: 5 },
+  { x: 1, y: 5 },
+  { x: 1, y: 8 },
+  { x: 7, y: 8 },
+  { x: 7, y: 12 },
 ];
 
 /** Melee-eligible lane tiles, spread along the run. */
 const MELEE_TILES: GridPos[] = [
-  { x: 1, y: 2 },
-  { x: 4, y: 3 },
-  { x: 7, y: 5 },
-  { x: 4, y: 7 },
-  { x: 4, y: 11 },
+  { x: 1, y: 1 },
+  { x: 4, y: 2 },
+  { x: 7, y: 4 },
+  { x: 4, y: 5 },
+  { x: 4, y: 8 },
 ];
 
 /**
@@ -47,11 +61,11 @@ const MELEE_TILES: GridPos[] = [
  * platforms within roughly two tiles of it.
  */
 const PLATFORM_TILES: GridPos[] = [
-  { x: 2, y: 1 }, { x: 3, y: 1 }, { x: 4, y: 2 },   // cover (1,2) and (4,3)
-  { x: 4, y: 4 }, { x: 6, y: 4 }, { x: 6, y: 6 },   // cover (4,3) and (7,5)
-  { x: 4, y: 6 }, { x: 4, y: 8 }, { x: 3, y: 9 },   // cover (4,7)
-  { x: 5, y: 9 }, { x: 4, y: 10 }, { x: 4, y: 12 }, // cover (4,11)
-  { x: 0, y: 5 }, { x: 0, y: 9 },                   // flanks
+  { x: 2, y: 1 }, { x: 3, y: 1 }, { x: 5, y: 1 },   // cover (1,1) and (4,2)
+  { x: 4, y: 3 }, { x: 6, y: 3 }, { x: 6, y: 4 },   // cover (4,2) and (7,4)
+  { x: 3, y: 4 }, { x: 4, y: 4 }, { x: 5, y: 6 },   // cover (4,5)
+  { x: 3, y: 7 }, { x: 4, y: 7 }, { x: 5, y: 7 },   // cover (4,8)
+  { x: 6, y: 9 }, { x: 6, y: 10 },                  // cover the final descent
 ];
 
 function buildTerrain(): Terrain {
@@ -71,76 +85,126 @@ function buildTerrain(): Terrain {
 }
 
 /**
- * Six waves, roughly three and a half to four minutes.
+ * Ten waves, run back to back with no break between them.
+ *
+ * Six waves plus breaks used to take about four minutes of wall clock. Removing
+ * the breaks and doubling the timescale would have collapsed the same content
+ * into well under a minute, which is not a run — so the level is longer in
+ * content and shorter in wall clock. Measured numbers are in the commit message.
  *
  * Each wave leans on one archetype so a missing family shows up as a specific,
- * comprehensible failure rather than a slow bleed. Wave 6 carries the boss,
- * which no single family can beat.
+ * comprehensible failure rather than a slow bleed. Waves 1-3 are the safety
+ * band; the boss lands on wave 10 and no single family can beat it.
+ *
+ * Authoring rules for the continuous handover, learned by measuring it:
+ *   - a wave's span is its own spawn schedule, since the next one starts the
+ *     tick this one finishes. Total run length is the sum of the spans plus the
+ *     walk time of the last stragglers.
+ *   - the first group of a wave starts 20-60 ticks in, which is the only
+ *     breathing room in the handover. Keep it: at zero the two waves' fronts
+ *     arrive on the same tick and read as one mass.
+ *   - spread groups across a wave rather than stacking them at tick 20. An
+ *     archetype arriving on its own is legible; four at once is noise.
  */
 export const M0_LEVEL: LevelDef = {
   id: "m0-rework",
   seed: 20260818,
   terrain: buildTerrain(),
   waves: [
-    // 1 — runners, heavily softened. A player who summons NOTHING must survive
-    // this, so the count is small enough that even a completely empty board
-    // leaks only a fraction of the life pool.
-    //
-    // Counts ARE cut here, against the usual "keep the mana faucet flowing"
-    // instinct, and that is safe only because killManaShare sits at 0.3: the
-    // 6/s tick floor plus the starting grant funds the first several summons
-    // without needing a single kill. If the dial ever moves toward 1.0 these
-    // counts must come back up or the opening starves.
+    // 1 — runners, heavily softened. THE SAFETY BAND STARTS HERE. With five
+    // lives instead of eighteen a leak is no longer absorbable, so waves 1-3
+    // are cut in count and in HP until a player making reasonable summons does
+    // not leak at all. This is early safety bought with wave content, not with
+    // a bigger life pool — more lives is what made leaks meaningless.
     {
-      prepTicks: 300,
       scaling: { hpPct: 55, speedPct: 78, damagePct: 50 },
-      spawns: [{ kind: "runner", count: 4, startTick: 30, intervalTicks: 34 }],
+      spawns: [{ kind: "runner", count: 5, startTick: 90, intervalTicks: 105 }],
     },
-    // 2 — swarm, still gentle. Two summons must clear this comfortably WHATEVER
-    // the roster drew — including the ~36% case where both draws are support
-    // towers that deal no damage at all. Sized so that board still survives.
+    // 2 — swarm, still gentle. Two summons must clear this WHATEVER the roster
+    // drew, including the case where both draws are support towers that deal no
+    // damage at all.
     {
-      prepTicks: 240,
-      scaling: { hpPct: 70, speedPct: 88, damagePct: 60 },
+      scaling: { hpPct: 60, speedPct: 85, damagePct: 60 },
       spawns: [
-        { kind: "swarm", count: 7, startTick: 30, intervalTicks: 18 },
-        { kind: "runner", count: 2, startTick: 260, intervalTicks: 28 },
+        { kind: "swarm", count: 10, startTick: 30, intervalTicks: 45 },
+        { kind: "runner", count: 3, startTick: 400, intervalTicks: 60 },
       ],
     },
-    // 3 — armoured. Fast-and-weak towers hit the 1-damage floor here.
+    // 3 — volume, with a TASTE of armour rather than a wall of it. Armour is
+    // a flat reduction, so a wave's hpPct cannot soften it: two armoured here
+    // teach the lesson, and wave 5 is where it is charged for. The safety band
+    // ends with this wave.
     {
-      prepTicks: 240,
+      scaling: { hpPct: 85, speedPct: 95, damagePct: 80 },
       spawns: [
-        { kind: "armoured", count: 6, startTick: 20, intervalTicks: 42 },
-        { kind: "swarm", count: 10, startTick: 120, intervalTicks: 15 },
+        { kind: "swarm", count: 10, startTick: 30, intervalTicks: 45 },
+        { kind: "armoured", count: 2, startTick: 120, intervalTicks: 140 },
+        { kind: "runner", count: 4, startTick: 250, intervalTicks: 70 },
       ],
     },
-    // 4 — fliers. Blockers are irrelevant; projectile or you leak.
+    // 4 — full strength, and fliers. Blockers are irrelevant; projectile or you
+    // leak. From here a bad board is punished.
     {
-      prepTicks: 240,
       spawns: [
-        { kind: "flier", count: 8, startTick: 20, intervalTicks: 28 },
-        { kind: "runner", count: 7, startTick: 190, intervalTicks: 20 },
+        { kind: "flier", count: 7, startTick: 20, intervalTicks: 60 },
+        { kind: "runner", count: 4, startTick: 300, intervalTicks: 50 },
       ],
     },
-    // 5 — brutes. A lone tier-1 blocker dies; needs vulnerable plus sustain.
+    // 5 — armour proper, at full strength, with volume behind it. Fast-and-weak
+    // towers hit the 1-damage floor; shred it, poison it, or hit it heavy.
     {
-      prepTicks: 270,
       spawns: [
-        { kind: "brute", count: 3, startTick: 20, intervalTicks: 90 },
-        { kind: "armoured", count: 5, startTick: 60, intervalTicks: 46 },
-        { kind: "flier", count: 6, startTick: 150, intervalTicks: 30 },
-        { kind: "runner", count: 6, startTick: 240, intervalTicks: 20 },
+        { kind: "armoured", count: 5, startTick: 20, intervalTicks: 100 },
+        { kind: "swarm", count: 10, startTick: 140, intervalTicks: 40 },
+        { kind: "runner", count: 3, startTick: 440, intervalTicks: 55 },
       ],
     },
-    // 6 — boss, escorted. Two families minimum.
+    // 6 — brutes. A lone tier-1 blocker dies; needs vulnerable plus sustain.
     {
-      prepTicks: 300,
       spawns: [
-        { kind: "boss", count: 1, startTick: 20, intervalTicks: 1 },
-        { kind: "swarm", count: 15, startTick: 60, intervalTicks: 13 },
-        { kind: "flier", count: 8, startTick: 180, intervalTicks: 22 },
-        { kind: "armoured", count: 5, startTick: 260, intervalTicks: 36 },
+        { kind: "brute", count: 2, startTick: 20, intervalTicks: 290 },
+        { kind: "armoured", count: 2, startTick: 90, intervalTicks: 140 },
+        { kind: "flier", count: 4, startTick: 220, intervalTicks: 85 },
+        { kind: "runner", count: 3, startTick: 420, intervalTicks: 55 },
+      ],
+    },
+    // 7 — air and speed. Punishes a board that answered wave 6 with blockers.
+    {
+      spawns: [
+        { kind: "flier", count: 9, startTick: 20, intervalTicks: 65 },
+        { kind: "runner", count: 7, startTick: 170, intervalTicks: 55 },
+        { kind: "swarm", count: 9, startTick: 340, intervalTicks: 38 },
+      ],
+    },
+    // 8 — everything at once, at full strength. This is where a board that has
+    // been coasting on one family should come apart.
+    {
+      spawns: [
+        { kind: "brute", count: 2, startTick: 20, intervalTicks: 270 },
+        { kind: "armoured", count: 4, startTick: 70, intervalTicks: 115 },
+        { kind: "flier", count: 5, startTick: 220, intervalTicks: 70 },
+        { kind: "swarm", count: 8, startTick: 390, intervalTicks: 38 },
+      ],
+    },
+    // 9 — the pre-boss squeeze. Three brutes plus volume.
+    {
+      spawns: [
+        { kind: "brute", count: 2, startTick: 20, intervalTicks: 250 },
+        { kind: "flier", count: 7, startTick: 110, intervalTicks: 65 },
+        { kind: "runner", count: 6, startTick: 230, intervalTicks: 55 },
+        { kind: "swarm", count: 8, startTick: 340, intervalTicks: 42 },
+      ],
+    },
+    // 10 — boss, escorted, and it arrives while wave 9's tail is still walking.
+    // Two families minimum.
+    {
+      spawns: [
+        { kind: "brute", count: 2, startTick: 20, intervalTicks: 250 },
+        { kind: "boss", count: 1, startTick: 60, intervalTicks: 1 },
+        { kind: "armoured", count: 2, startTick: 120, intervalTicks: 100 },
+        { kind: "flier", count: 5, startTick: 180, intervalTicks: 70 },
+        { kind: "swarm", count: 8, startTick: 250, intervalTicks: 36 },
+        { kind: "runner", count: 4, startTick: 450, intervalTicks: 45 },
       ],
     },
   ],

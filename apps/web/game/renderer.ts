@@ -26,6 +26,7 @@ const COLORS = {
   status: 0xc084fc,
   range: 0x58d6ff,
   merge: 0x3fb950,
+  upgrade: 0xffd166,
   hp: 0x3fb950,
   hpBack: 0x00000088,
   engaged: 0xff6b6b,
@@ -57,6 +58,50 @@ const STATUS_COLOR: Record<StatusKind, number> = {
 
 const STATUS_ORDER: StatusKind[] = ["slow", "poison", "vulnerable", "armor_shred", "mark", "stun"];
 
+/**
+ * Glyph sizing, in world units where TILE = 1000.
+ *
+ * These are the readability floor from the playtest, not a style: the tower
+ * emoji must land at 28 CSS px or more at the reference phone width, and the
+ * only lever the renderer has is the fraction of a tile the glyph occupies.
+ * A tile is drawn at `min(boardWidthPx / cols, boardHeightPx / rows)`, so the
+ * fraction below times that number is the delivered pixel size.
+ */
+const TOWER_GLYPH = TILE * 0.7;
+/** Plates sized around the glyph rather than the other way round. */
+const TOWER_PLATE = TILE * 0.76;
+const TOWER_PLATE_MELEE = TILE * 0.82;
+/** Enemies scale with their radius, but never below something readable. */
+const ENEMY_GLYPH_MIN = TILE * 0.42;
+
+/**
+ * The wave-boundary sweep, ms.
+ *
+ * With the break phase gone there is no pause to mark a new wave, so the
+ * boundary has to be drawn. A band of light runs down the lane from the spawn
+ * edge — the direction enemies come from — at the same moment the counter pops
+ * and the cue fires.
+ */
+const WAVE_SWEEP_MS = 900;
+
+/** The board-wide pulse when a family upgrade lands, ms. */
+const FAMILY_PULSE_MS = 650;
+
+/** The merge-moment animation, ms. See playMerge. */
+const MERGE_FX_MS = 700;
+/** How long the re-rolled type flashes at 2x. The re-roll IS the mechanic. */
+const MERGE_FLASH_MS = 400;
+
+export type MergeFx = {
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  /** The type the merge rolled into — the thing the player must see change. */
+  icon: string;
+  tier: number;
+};
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
@@ -73,6 +118,10 @@ export class Renderer {
   private floaterPool: Text[] = [];
   private selectedTowerId: number | null = null;
   private partnerIds: number[] = [];
+  private mergeableIds: number[] = [];
+  private mergeFx: (MergeFx & { start: number })[] = [];
+  private waveSweepStart = -1;
+  private familyPulse: { towerId: string; start: number }[] = [];
   private built = false;
 
   async init(canvasHost: HTMLElement, state: GameState): Promise<void> {
@@ -98,6 +147,37 @@ export class Renderer {
 
   setPartners(ids: number[]): void {
     this.partnerIds = ids;
+  }
+
+  /** Towers that have a legal partner right now. Drives the standing badge. */
+  setMergeable(ids: number[]): void {
+    this.mergeableIds = ids;
+  }
+
+  /**
+   * Fire the merge-moment animation. Three things happen at once and all three
+   * are needed: the sources converge (what merged), a burst (that it happened),
+   * and the new type's glyph at 2x (what it became). Merge re-rolls the tower
+   * type — if the player does not see the re-roll, the mechanic is invisible.
+   */
+  playMerge(fx: MergeFx): void {
+    this.mergeFx.push({ ...fx, start: performance.now() });
+  }
+
+  /** A new wave started spawning. See WAVE_SWEEP_MS. */
+  playWaveStart(): void {
+    this.waveSweepStart = performance.now();
+  }
+
+  /**
+   * A family upgrade landed: every tower of that type pulses simultaneously.
+   *
+   * The simultaneity is the message. A per-tower upgrade and a family upgrade
+   * look identical if only one tower reacts, and the whole reason this sink
+   * exists is that it reaches the whole board at once.
+   */
+  playFamilyPulse(towerId: string): void {
+    this.familyPulse.push({ towerId, start: performance.now() });
   }
 
   resize(width: number, height: number, state: GameState): void {
@@ -161,6 +241,8 @@ export class Renderer {
     const prevEnemies = new Map(prev.enemies.map((e) => [e.id, e]));
     const prevProjectiles = new Map(prev.projectiles.map((p) => [p.id, p]));
 
+    this.drawWaveSweep(g, cur);
+
     // Range ring for the selected tower, under everything else.
     if (this.selectedTowerId !== null) {
       const t = cur.towers.find((x) => x.id === this.selectedTowerId);
@@ -173,20 +255,66 @@ export class Renderer {
       }
     }
 
+    // Selecting a tower dims everything that is not a legal partner. The
+    // question the player is answering at that moment is "what can this merge
+    // with", so everything else is noise until they answer it.
+    //
+    // Dimming is applied per tower rather than as an overlay: glyphs live in
+    // their own container above this Graphics layer, so a dark rectangle drawn
+    // here would sit UNDER every emoji on the board and dim nothing that reads.
+    const focusing = this.selectedTowerId !== null && this.partnerIds.length > 0;
+    const dimTile = (tile: { pos: { x: number; y: number } }) => {
+      const c = tileCentre(tile.pos);
+      g.roundRect(c.x - TILE * 0.46, c.y - TILE * 0.46, TILE * 0.92, TILE * 0.92, TILE * 0.14);
+    };
+    if (focusing) {
+      const occupied = new Set(cur.towers.map((t) => t.tileIndex));
+      for (let i = 0; i < cur.level.terrain.tiles.length; i++) {
+        if (occupied.has(i)) continue;
+        dimTile(cur.level.terrain.tiles[i]);
+      }
+      g.fill({ color: 0x05070c, alpha: 0.62 });
+    }
+
+    // A slow breathing value, shared by every standing pulse on the board so
+    // they beat together rather than shimmering independently.
+    const now = performance.now();
+    const pulse = 0.5 + 0.5 * Math.sin(now / 320);
+    this.familyPulse = this.familyPulse.filter((fp) => now - fp.start < FAMILY_PULSE_MS);
+
     for (const t of cur.towers) {
       const spec = towerSpec(t.towerId);
       const selected = t.id === this.selectedTowerId;
       const partner = this.partnerIds.includes(t.id);
-      const size = spec.family === "melee" ? TILE * 0.58 : TILE * 0.5;
+      const mergeable = this.mergeableIds.includes(t.id);
+      const size = spec.family === "melee" ? TOWER_PLATE_MELEE : TOWER_PLATE;
+      const dim = focusing && !selected && !partner ? 0.3 : 1;
 
       // Family is the plate colour; the glyph on top carries the role.
       g.roundRect(t.x - size / 2, t.y - size / 2, size, size, TILE * 0.1);
-      g.fill({ color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.22 });
-      g.stroke({ width: 34, color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.9 });
+      g.fill({ color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.22 * dim });
+      g.stroke({ width: 34, color: FAMILY_COLOR[spec.family] ?? 0xffffff, alpha: 0.9 * dim });
+
+      // Pre-merge affordance: a standing pulse on anything that HAS a partner,
+      // before the player touches anything. Without it a merge is only
+      // discoverable by tapping towers at random to see what lights up.
+      if (mergeable && !partner && !selected && !focusing) {
+        g.roundRect(t.x - size * 0.62, t.y - size * 0.62, size * 1.24, size * 1.24, TILE * 0.13);
+        g.stroke({ width: 34, color: COLORS.merge, alpha: 0.35 + 0.45 * pulse });
+      }
 
       if (partner || selected) {
-        g.roundRect(t.x - size * 0.72, t.y - size * 0.72, size * 1.44, size * 1.44, TILE * 0.14);
-        g.stroke({ width: 46, color: partner ? COLORS.merge : 0xffffff, alpha: 0.95 });
+        g.roundRect(t.x - size * 0.66, t.y - size * 0.66, size * 1.32, size * 1.32, TILE * 0.14);
+        g.stroke({ width: 52, color: partner ? COLORS.merge : 0xffffff, alpha: 0.95 });
+      }
+
+      // Family upgrade: a ring thrown off every tower of the type at once.
+      for (const fp of this.familyPulse) {
+        if (fp.towerId !== t.towerId) continue;
+        const k = (now - fp.start) / FAMILY_PULSE_MS;
+        if (k >= 1) continue;
+        g.circle(t.x, t.y, size * (0.6 + k * 1.4));
+        g.stroke({ width: 120 * (1 - k), color: COLORS.upgrade, alpha: 1 - k });
       }
 
       // Tier needs its own indicator: emoji cannot be tinted, so tier cannot
@@ -258,7 +386,14 @@ export class Renderer {
     // Glyphs last so they sit above the geometry.
     this.iconUsed = 0;
     for (const t of cur.towers) {
-      this.glyph(towerSpec(t.towerId).icon, t.x, t.y, TILE * 0.34);
+      const size = towerSpec(t.towerId).family === "melee" ? TOWER_PLATE_MELEE : TOWER_PLATE;
+      const lit = !focusing || t.id === this.selectedTowerId || this.partnerIds.includes(t.id);
+      this.glyph(towerSpec(t.towerId).icon, t.x, t.y, TOWER_GLYPH, lit ? 1 : 0.3);
+      // The merge badge: a glyph, not a word. Sits on the plate's shoulder so
+      // it never covers the tower's own identity.
+      if (this.mergeableIds.includes(t.id) && lit) {
+        this.glyph("🔁", t.x + size * 0.46, t.y - size * 0.46, TILE * 0.3, 0.6 + 0.4 * pulse);
+      }
     }
     for (const e of cur.enemies) {
       const p = prevEnemies.get(e.id);
@@ -268,9 +403,10 @@ export class Renderer {
         spec.icon,
         (p ? lerp(p.x, e.x, alpha) : e.x) + off.x,
         (p ? lerp(p.y, e.y, alpha) : e.y) + off.y,
-        spec.radius * 1.5,
+        Math.max(spec.radius * 2.1, ENEMY_GLYPH_MIN),
       );
     }
+    this.drawMergeFx(g);
     for (let i = this.iconUsed; i < this.iconPool.length; i++) this.iconPool[i].visible = false;
 
     for (const proj of cur.projectiles) {
@@ -285,11 +421,46 @@ export class Renderer {
   }
 
   /**
+   * A band of light travelling down the lane from the spawn edge, marking a
+   * wave boundary that no longer has a pause to mark it.
+   */
+  private drawWaveSweep(g: Graphics, cur: GameState): void {
+    if (this.waveSweepStart < 0) return;
+    const t = (performance.now() - this.waveSweepStart) / WAVE_SWEEP_MS;
+    if (t >= 1) {
+      this.waveSweepStart = -1;
+      return;
+    }
+
+    const { terrain } = cur.level;
+    const pts = terrain.path.map(tileCentre);
+    const head = t * (terrain.height + 2) * TILE - TILE;
+    const fade = 1 - t;
+
+    // Tint the spawn edge itself, so the direction reads even if the player is
+    // looking at the far end of the lane.
+    g.rect(0, -TILE, terrain.width * TILE, TILE * 1.2 * fade);
+    g.fill({ color: COLORS.merge, alpha: 0.25 * fade });
+
+    // A short bright section of lane centred on the sweep head.
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const lo = Math.min(a.y, b.y);
+      const hi = Math.max(a.y, b.y);
+      if (head + TILE < lo || head - TILE > hi) continue;
+      g.moveTo(a.x, Math.max(lo, Math.min(hi, head - TILE)));
+      g.lineTo(b.x, Math.max(lo, Math.min(hi, head + TILE)));
+    }
+    g.stroke({ width: TILE * 0.85, color: 0xffffff, alpha: 0.22 * fade, cap: "round" });
+  }
+
+  /**
    * Pooled emoji glyph. Emoji cannot be reliably tinted, so every colour cue —
    * family, tier, status — is drawn as geometry around the glyph rather than
    * applied to it.
    */
-  private glyph(text: string, x: number, y: number, size: number): void {
+  private glyph(text: string, x: number, y: number, size: number, alpha = 1): void {
     let t = this.iconPool[this.iconUsed];
     if (!t) {
       t = new Text({ text: "", style: new TextStyle({ fontSize: 400 }) });
@@ -302,7 +473,77 @@ export class Renderer {
     t.style.fontSize = size;
     t.x = x;
     t.y = y;
+    t.alpha = alpha;
     this.iconUsed++;
+  }
+
+  /**
+   * The merge moment. Sources converge into the destination, a ring bursts out
+   * of it, the new tier number pops, and the RE-ROLLED type flashes at 2x for
+   * MERGE_FLASH_MS before settling to normal size.
+   *
+   * The flash is the load-bearing part: merging re-rolls the tower type, and a
+   * mechanic the player never sees fire is a mechanic they do not have.
+   */
+  private drawMergeFx(g: Graphics): void {
+    if (this.mergeFx.length === 0) return;
+    const now = performance.now();
+
+    for (const fx of this.mergeFx) {
+      const t = (now - fx.start) / MERGE_FX_MS;
+      if (t >= 1) continue;
+
+      // 1. Convergence, over the first 40% of the animation. A bright trail
+      //    behind it, because the eye has to be able to find where the merge
+      //    came FROM without already looking there.
+      if (t < 0.4) {
+        const k = t / 0.4;
+        const x = lerp(fx.fromX, fx.toX, k * k);
+        const y = lerp(fx.fromY, fx.toY, k * k);
+        const size = TILE * 0.66 * (1 - k * 0.4);
+
+        g.moveTo(fx.fromX, fx.fromY);
+        g.lineTo(x, y);
+        g.stroke({ width: TILE * 0.18 * (1 - k), color: COLORS.merge, alpha: 0.7 * (1 - k) });
+
+        g.roundRect(x - size / 2, y - size / 2, size, size, TILE * 0.12);
+        g.fill({ color: 0xffffff, alpha: 0.85 });
+      }
+
+      // 2. Burst, once they land: a white core flash and a green ring thrown
+      //    wide enough to be seen from the other side of the board.
+      if (t >= 0.32) {
+        const k = Math.min(1, (t - 0.32) / 0.55);
+        g.circle(fx.toX, fx.toY, TILE * (0.5 + k * 0.35));
+        g.fill({ color: 0xffffff, alpha: 0.75 * (1 - k) });
+
+        g.circle(fx.toX, fx.toY, TILE * (0.35 + k * 1.5));
+        g.stroke({ width: 150 * (1 - k), color: COLORS.merge, alpha: 1 - k });
+
+        g.circle(fx.toX, fx.toY, TILE * (0.2 + k * 1.05));
+        g.stroke({ width: 90 * (1 - k), color: 0xffffff, alpha: 0.8 * (1 - k) });
+      }
+
+      // 3. The re-rolled type at 2x, settling. Drawn over the real tower.
+      const flash = (now - fx.start) / MERGE_FLASH_MS;
+      if (flash < 1) {
+        const scale = 2 - flash;
+        this.glyph(fx.icon, fx.toX, fx.toY, TOWER_GLYPH * scale);
+      }
+
+      // 4. The new tier, popping.
+      const tierK = Math.min(1, t / 0.55);
+      const bump = tierK < 0.5 ? 0.6 + tierK * 2.4 : 1.8 - (tierK - 0.5) * 1.2;
+      this.glyph(
+        `${fx.tier}`,
+        fx.toX + TILE * 0.5,
+        fx.toY + TILE * 0.5,
+        TILE * 0.45 * bump,
+        1 - Math.max(0, (t - 0.75) / 0.25),
+      );
+    }
+
+    this.mergeFx = this.mergeFx.filter((fx) => now - fx.start < MERGE_FX_MS);
   }
 
   /**

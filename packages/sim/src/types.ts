@@ -68,8 +68,6 @@ export type WaveScaling = {
 
 export type WaveDef = {
   spawns: SpawnDef[];
-  /** Ticks of breathing room before this wave auto-starts. */
-  prepTicks: number;
   /** Omitted means 100% across the board. */
   scaling?: WaveScaling;
 };
@@ -91,6 +89,15 @@ export type Input =
   | { tick: number; kind: "summon"; payload: Record<string, never> }
   | { tick: number; kind: "merge"; payload: { sourceId: number; targetId: number } }
   | { tick: number; kind: "sell"; payload: { towerId: number } }
+  /**
+   * Raise one tower family's upgrade level by one. `towerId` is the FAMILY —
+   * a row in TOWER_POOL, e.g. "arrow" — not an instance id, which is what the
+   * sell and merge payloads carry.
+   *
+   * Handled in the same input phase and the same deterministic order as every
+   * other input. It adds no tick phase.
+   */
+  | { tick: number; kind: "family_upgrade"; payload: { towerId: TowerId } }
   | { tick: number; kind: "ability"; payload: { abilityId: string } };
 
 export type Enemy = {
@@ -165,7 +172,14 @@ export type Projectile = {
   alive: boolean;
 };
 
-export type RunStatus = "prep" | "wave" | "won" | "lost";
+/**
+ * There is no "prep". The break phase between waves was deleted rather than
+ * shortened in the tempo patch — a zero-length phase that still exists is a
+ * source of off-by-one bugs in the wave counter and in replay. Wave N+1 begins
+ * spawning the tick wave N finishes spawning, so a run is only ever running,
+ * won or lost.
+ */
+export type RunStatus = "wave" | "won" | "lost";
 
 /** Surfaced to the UI for one tick. Never drives sim logic. */
 export type SimEvent =
@@ -173,6 +187,12 @@ export type SimEvent =
   | { kind: "bounty"; amount: number; x: number; y: number; enemy: EnemyKind }
   | { kind: "summoned"; towerId: TowerId; tileIndex: number }
   | { kind: "merged"; towerId: TowerId; tier: number }
+  /** A family upgrade landed. The render layer pulses every tower it affects,
+   *  which is the only way the board-wide reach of it is visible. */
+  | { kind: "family_upgraded"; towerId: TowerId; level: number }
+  /** A new wave started spawning. With no break to mark the boundary, this is
+   *  what the render layer hangs the wave-change cue on. */
+  | { kind: "wave_start"; wave: number }
   | { kind: "blocker_died"; tileIndex: number };
 
 export type GameState = {
@@ -194,11 +214,23 @@ export type GameState = {
   /** What the next summon costs. Escalates per summon and never resets. */
   summonCost: number;
   summonsUsed: number;
+  /**
+   * Upgrade level per tower FAMILY, keyed by TowerId — one entry per roster
+   * slot, built in roster order and never re-keyed, so serialization order is
+   * fixed and the hash is stable (CLAUDE.md §3 on iteration order).
+   *
+   * IN-RUN ONLY. Initialised to zero at the start of every run and never read
+   * from or written to anything outside the run.
+   */
+  familyUpgradeLevels: Record<TowerId, number>;
   lives: number;
+  /**
+   * Which wave is currently SPAWNING. It reaches level.waves.length once
+   * everything has been sent, while enemies from earlier waves may still be
+   * walking — the run is not over until the board is clear.
+   */
   waveIndex: number;
   waveTick: number;
-  /** Ticks until the next wave auto-starts. Only meaningful in "prep". */
-  prepRemaining: number;
   spawnCursors: number[];
   enemies: Enemy[];
   towers: Tower[];
