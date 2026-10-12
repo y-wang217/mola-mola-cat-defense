@@ -1,12 +1,12 @@
 # siege (working title)
 
 Mobile-first tower defense, built as a daily-challenge web game.
-**`claude.md` is the source of truth for how this repo is built — read it first.**
+**`CLAUDE.md` holds the repo's invariants — read it first. Everything else is under [`docs/`](docs/README.md).**
 
 ## Status: M0 (summon rework)
 
 M0 asks one question and nothing else: *does a four-minute run make a person
-want a second one?* (`claude.md` §9.)
+want a second one?* (`docs/README.md`, Roadmap.)
 
 The player picks a **roster of 5 distinct towers before the run**, then plays one
 verb: **summon** — costs mana, drops a random roster tower onto a random legal
@@ -41,7 +41,7 @@ pnpm build
 `tick(state, inputs) -> GameState` is pure and deterministic. No wall clock, no
 `Math.random`, no DOM, no variable delta time inside `packages/sim`. The
 prohibitions are enforced mechanically by `packages/sim/__tests__/purity.test.ts`,
-and the reasoning is in `claude.md` §3.
+and the reasoning is in `docs/architecture.md`.
 
 ## Design notes worth knowing before changing tuning
 
