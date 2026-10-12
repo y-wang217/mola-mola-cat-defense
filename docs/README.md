@@ -8,7 +8,9 @@ Working title: **TBD** (codename `siege` in package names until we pick one)
   M0.1 playtest-feedback patches A–D (merged in `97db437`).
 - **In flight:** M0.2, map engine and stages
   ([`spec/m0.2-map-engine-and-stages.md`](spec/m0.2-map-engine-and-stages.md)).
-  Step 0, adopting the repo rules, is done and awaiting review.
+  Step 0, adopting the repo rules, is done. The step 1 report
+  ([`reports/m0.2-step1.md`](reports/m0.2-step1.md)) is awaiting review: a
+  hard stop before any code.
 
 ## Roadmap
 

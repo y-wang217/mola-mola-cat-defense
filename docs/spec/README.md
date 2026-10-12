@@ -37,7 +37,12 @@ Two rules outrank anything a prompt says:
 
 #### `m0.2-map-engine-and-stages.md`
 
-None yet.
+- **2026-10-12, owner direction.** Much of the game's design will come from
+  Stephanie. M0.2 is to build scaffolding and hold a high bar of rigor, so
+  design changes land as data without a rewrite. The step 1 report
+  ([`docs/reports/m0.2-step1.md`](../reports/m0.2-step1.md)) proposes which
+  parts of this prompt are scaffolding and which are design. That split is
+  awaiting the owner's decision.
 
 ## Before the register
 
